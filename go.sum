@@ -66,10 +66,6 @@ github.com/matttproud/golang_protobuf_extensions v1.0.1 h1:4hp9jkHxhMHkqkrB3Ix0j
 github.com/matttproud/golang_protobuf_extensions v1.0.1/go.mod h1:D8He9yQNgCq6Z5Ld7szi9bcBfOoFv/3dc6xSMkL2PC0=
 github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd/go.mod h1:6dJC0mAP4ikYIbvyc7fijjWJddQyLn8Ig3JB5CqoB9Q=
 github.com/modern-go/reflect2 v1.0.1/go.mod h1:bx2lNnkwVCuqBIxFjflWJWanXIb3RllmbCylyMrvgv0=
-github.com/mosaicnetworks/babble v0.3.1-0.20190606143211-b0b397618436 h1:2ePgB/Fq9TDqtyZN82gxSHbU9btcZgkTcgI6MRkjq6U=
-github.com/mosaicnetworks/babble v0.3.1-0.20190606143211-b0b397618436/go.mod h1:DFwweITqHhDS24maHISfd1M85abEevyhq95M/03wZXY=
-github.com/mosaicnetworks/babble v0.4.1 h1:rspBRKk8ewCyNtjnbuSMcF5Cizh1+sjR2JDxV7oT3Hc=
-github.com/mosaicnetworks/babble v0.4.1/go.mod h1:DFwweITqHhDS24maHISfd1M85abEevyhq95M/03wZXY=
 github.com/mwitkow/go-conntrack v0.0.0-20161129095857-cc309e4a2223/go.mod h1:qRWi+5nqEBWmkhHvq77mSJWrCKwh8bxhgT7d/eI7P4U=
 github.com/onsi/ginkgo v1.6.0/go.mod h1:lLunBs/Ym6LB5Z9jYTR76FiuTmxDTDusOGeTQH+WWjE=
 github.com/onsi/ginkgo v1.7.0/go.mod h1:lLunBs/Ym6LB5Z9jYTR76FiuTmxDTDusOGeTQH+WWjE=
