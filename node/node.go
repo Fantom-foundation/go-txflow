@@ -1,27 +1,56 @@
 package node
 
 import (
+	"context"
 	"fmt"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/andrecronje/babble-abci/hashgraph"
-	"github.com/andrecronje/babble-abci/net"
+	bnet "github.com/andrecronje/babble-abci/net"
 	b "github.com/andrecronje/babble/src/node"
 	"github.com/andrecronje/babble/src/peers"
 	"github.com/andrecronje/babble/src/service"
+	"github.com/pkg/errors"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/rs/cors"
+	mempl "github.com/tendermint/tendermint/mempool"
 
+	"github.com/tendermint/go-amino"
 	cfg "github.com/tendermint/tendermint/config"
+	"github.com/tendermint/tendermint/crypto/ed25519"
+	"github.com/tendermint/tendermint/evidence"
 	cmn "github.com/tendermint/tendermint/libs/common"
 	dbm "github.com/tendermint/tendermint/libs/db"
 	"github.com/tendermint/tendermint/libs/log"
 	"github.com/tendermint/tendermint/p2p"
+	"github.com/tendermint/tendermint/p2p/pex"
+	"github.com/tendermint/tendermint/privval"
 	"github.com/tendermint/tendermint/proxy"
+	"github.com/tendermint/tendermint/state/txindex"
+	"github.com/tendermint/tendermint/state/txindex/kv"
+	"github.com/tendermint/tendermint/state/txindex/null"
 	"github.com/tendermint/tendermint/types"
+	tmtime "github.com/tendermint/tendermint/types/time"
+	"github.com/tendermint/tendermint/version"
+
+	bc "github.com/tendermint/tendermint/blockchain"
+	tmpubsub "github.com/tendermint/tendermint/libs/pubsub"
+	rpccore "github.com/tendermint/tendermint/rpc/core"
+	ctypes "github.com/tendermint/tendermint/rpc/core/types"
+	grpccore "github.com/tendermint/tendermint/rpc/grpc"
+	rpcserver "github.com/tendermint/tendermint/rpc/lib/server"
+
+	cs "github.com/tendermint/tendermint/consensus"
+	sm "github.com/tendermint/tendermint/state"
 )
 
 // Node defines a babble node
@@ -31,12 +60,15 @@ type Node struct {
 	// object is used to manage the node's state.
 	state
 
-	conf *cfg.Config
+	config     *cfg.Config
+	genesisDoc *types.GenesisDoc // initial validator set
+	addrBook   pex.AddrBook      // known peers
 
-	Store        hashgraph.Store
-	Peers        *peers.PeerSet
-	GenesisPeers *peers.PeerSet
-	Service      *service.Service
+	Store         hashgraph.Store
+	Peers         *peers.PeerSet
+	GenesisPeers  *peers.PeerSet
+	Service       *service.Service
+	privValidator types.PrivValidator // local node's validator key
 
 	logger log.Logger
 
@@ -48,13 +80,14 @@ type Node struct {
 
 	// transport is the object used to transmit and receive commands to other
 	// nodes.
-	trans net.Transport
-	netCh <-chan net.RPC
+	trans bnet.Transport
+	netCh <-chan bnet.RPC
 
 	// proxy is the link between the node and the application. It is used to
 	// commit blocks from Babble to the application, and relay submitted
 	// transactions from the applications to Babble.
-	proxy proxy.AppConnConsensus
+	proxy        proxy.AppConnConsensus
+	rpcListeners []net.Listener // rpc servers
 
 	// submitCh is where the node listens for incoming transactions to be
 	// submitted to Babble
@@ -77,15 +110,28 @@ type Node struct {
 	syncErrors     int
 	SyncLimit      int
 	EnableFastSync bool
+	stateDB        dbm.DB
+	blockStore     *bc.BlockStore // store the blockchain to disk
+	prometheusSrv  *http.Server
+	eventBus       *types.EventBus // pub/sub for services
+	proxyApp       proxy.AppConns  // connection to the application
+	txIndexer      txindex.TxIndexer
+	evidencePool   *evidence.EvidencePool // tracking evidence
+	indexerService *txindex.IndexerService
+
+	// network
+	nodeInfo    p2p.NodeInfo
+	nodeKey     *p2p.NodeKey // our node privkey
+	isListening bool
 }
 
 // NewInAppNode is a factory method that returns a Node instance
-func NewInAppNode(conf *cfg.Config,
+func NewInAppNode(config *cfg.Config,
 	validator *b.Validator,
 	peers *peers.PeerSet,
 	genesisPeers *peers.PeerSet,
 	store hashgraph.Store,
-	trans net.Transport,
+	trans bnet.Transport,
 	proxy proxy.AppConnConsensus,
 	logger log.Logger,
 ) *Node {
@@ -94,7 +140,7 @@ func NewInAppNode(conf *cfg.Config,
 	signal.Notify(sigintCh, os.Interrupt, syscall.SIGINT)
 
 	node := Node{
-		conf:         conf,
+		config:       config,
 		logger:       logger,
 		core:         NewCore(validator, peers, genesisPeers, store, proxy, logger),
 		trans:        trans,
@@ -158,8 +204,296 @@ func NewNode(config *cfg.Config,
 	metricsProvider MetricsProvider,
 	logger log.Logger) (*Node, error) {
 
-	logger.Info("Starting Babble")
-	return nil, nil
+	// Get BlockStore
+	blockStoreDB, err := dbProvider(&DBContext{"blockstore", config})
+	if err != nil {
+		return nil, err
+	}
+	blockStore := bc.NewBlockStore(blockStoreDB)
+
+	// Get State
+	stateDB, err := dbProvider(&DBContext{"state", config})
+	if err != nil {
+		return nil, err
+	}
+
+	// Get genesis doc
+	// TODO: move to state package?
+	genDoc, err := loadGenesisDoc(stateDB)
+	if err != nil {
+		genDoc, err = genesisDocProvider()
+		if err != nil {
+			return nil, err
+		}
+		// save genesis doc to prevent a certain class of user errors (e.g. when it
+		// was changed, accidentally or not). Also good for audit trail.
+		saveGenesisDoc(stateDB, genDoc)
+	}
+
+	state, err := sm.LoadStateFromDBOrGenesisDoc(stateDB, genDoc)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create the proxyApp and establish connections to the ABCI app (consensus, mempool, query).
+	proxyApp := proxy.NewAppConns(clientCreator)
+	proxyApp.SetLogger(logger.With("module", "proxy"))
+	if err := proxyApp.Start(); err != nil {
+		return nil, fmt.Errorf("Error starting proxy app connections: %v", err)
+	}
+
+	// EventBus and IndexerService must be started before the handshake because
+	// we might need to index the txs of the replayed block as this might not have happened
+	// when the node stopped last time (i.e. the node stopped after it saved the block
+	// but before it indexed the txs, or, endblocker panicked)
+	eventBus := types.NewEventBus()
+	eventBus.SetLogger(logger.With("module", "events"))
+
+	err = eventBus.Start()
+	if err != nil {
+		return nil, err
+	}
+
+	// Transaction indexing
+	var txIndexer txindex.TxIndexer
+	switch config.TxIndex.Indexer {
+	case "kv":
+		store, err := dbProvider(&DBContext{"tx_index", config})
+		if err != nil {
+			return nil, err
+		}
+		if config.TxIndex.IndexTags != "" {
+			txIndexer = kv.NewTxIndex(store, kv.IndexTags(splitAndTrimEmpty(config.TxIndex.IndexTags, ",", " ")))
+		} else if config.TxIndex.IndexAllTags {
+			txIndexer = kv.NewTxIndex(store, kv.IndexAllTags())
+		} else {
+			txIndexer = kv.NewTxIndex(store)
+		}
+	default:
+		txIndexer = &null.TxIndex{}
+	}
+
+	indexerService := txindex.NewIndexerService(txIndexer, eventBus)
+	indexerService.SetLogger(logger.With("module", "txindex"))
+
+	err = indexerService.Start()
+	if err != nil {
+		return nil, err
+	}
+
+	// Create the handshaker, which calls RequestInfo, sets the AppVersion on the state,
+	// and replays any blocks as necessary to sync tendermint with the app.
+	consensusLogger := logger.With("module", "consensus")
+	handshaker := cs.NewHandshaker(stateDB, state, blockStore, genDoc)
+	handshaker.SetLogger(consensusLogger)
+	handshaker.SetEventBus(eventBus)
+	if err := handshaker.Handshake(proxyApp); err != nil {
+		return nil, fmt.Errorf("Error during handshake: %v", err)
+	}
+
+	// Reload the state. It will have the Version.Consensus.App set by the
+	// Handshake, and may have other modifications as well (ie. depending on
+	// what happened during block replay).
+	state = sm.LoadState(stateDB)
+
+	// Log the version info.
+	logger.Info("Version info",
+		"software", version.TMCoreSemVer,
+		"block", version.BlockProtocol,
+		"p2p", version.P2PProtocol,
+	)
+
+	// If the state and software differ in block version, at least log it.
+	if state.Version.Consensus.Block != version.BlockProtocol {
+		logger.Info("Software and state have different block protocols",
+			"software", version.BlockProtocol,
+			"state", state.Version.Consensus.Block,
+		)
+	}
+
+	if config.PrivValidatorListenAddr != "" {
+		// If an address is provided, listen on the socket for a connection from an
+		// external signing process.
+		// FIXME: we should start services inside OnStart
+		privValidator, err = createAndStartPrivValidatorSocketClient(config.PrivValidatorListenAddr, logger)
+		if err != nil {
+			return nil, errors.Wrap(err, "Error with private validator socket client")
+		}
+	}
+
+	// Decide whether to fast-sync or not
+	// We don't fast-sync when the only validator is us.
+	/*fastSync := config.FastSync
+	if state.Validators.Size() == 1 {
+		addr, _ := state.Validators.GetByIndex(0)
+		privValAddr := privValidator.GetPubKey().Address()
+		if bytes.Equal(privValAddr, addr) {
+			fastSync = false
+		}
+	}*/
+
+	pubKey := privValidator.GetPubKey()
+	addr := pubKey.Address()
+	// Log whether this node is a validator or an observer
+	if state.Validators.HasAddress(addr) {
+		consensusLogger.Info("This node is a validator", "addr", addr, "pubKey", pubKey)
+	} else {
+		consensusLogger.Info("This node is not a validator", "addr", addr, "pubKey", pubKey)
+	}
+
+	// Make Evidence Reactor
+	evidenceDB, err := dbProvider(&DBContext{"evidence", config})
+	if err != nil {
+		return nil, err
+	}
+	evidenceLogger := logger.With("module", "evidence")
+	evidencePool := evidence.NewEvidencePool(stateDB, evidenceDB)
+	evidencePool.SetLogger(evidenceLogger)
+	evidenceReactor := evidence.NewEvidenceReactor(evidencePool)
+	evidenceReactor.SetLogger(evidenceLogger)
+
+	//p2pLogger := logger.With("module", "p2p")
+	nodeInfo, err := makeNodeInfo(
+		config,
+		nodeKey.ID(),
+		txIndexer,
+		genDoc.ChainID,
+		p2p.NewProtocolVersion(
+			version.P2PProtocol, // global
+			state.Version.Consensus.Block,
+			state.Version.Consensus.App,
+		),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// run the profile server
+	profileHost := config.ProfListenAddress
+	if profileHost != "" {
+		go func() {
+			logger.Error("Profile server", "err", http.ListenAndServe(profileHost, nil))
+		}()
+	}
+
+	node := &Node{
+		config:        config,
+		genesisDoc:    genDoc,
+		privValidator: privValidator,
+
+		nodeInfo:     nodeInfo,
+		nodeKey:      nodeKey,
+		evidencePool: evidencePool,
+
+		stateDB:        stateDB,
+		blockStore:     blockStore,
+		proxyApp:       proxyApp,
+		txIndexer:      txIndexer,
+		indexerService: indexerService,
+		eventBus:       eventBus,
+	}
+	node.BaseService = *cmn.NewBaseService(logger, "Node", node)
+	return node, nil
+}
+
+func (n *Node) OnStart() error {
+	now := tmtime.Now()
+	genTime := n.genesisDoc.GenesisTime
+	if genTime.After(now) {
+		n.Logger.Info("Genesis time is in the future. Sleeping until then...", "genTime", genTime)
+		time.Sleep(genTime.Sub(now))
+	}
+
+	// Add private IDs to addrbook to block those peers being added
+	n.addrBook.AddPrivateIDs(splitAndTrimEmpty(n.config.P2P.PrivatePeerIDs, ",", " "))
+
+	// Start the RPC server before the P2P server
+	// so we can eg. receive txs for the first block
+	if n.config.RPC.ListenAddress != "" {
+		listeners, err := n.startRPC()
+		if err != nil {
+			return err
+		}
+		n.rpcListeners = listeners
+	}
+
+	if n.config.Instrumentation.Prometheus &&
+		n.config.Instrumentation.PrometheusListenAddr != "" {
+		n.prometheusSrv = n.startPrometheusServer(n.config.Instrumentation.PrometheusListenAddr)
+	}
+
+	// Start the transport.
+	// TODO: Replace with Babble P2P
+	/*addr, err := p2p.NewNetAddressStringWithOptionalID(n.config.P2P.ListenAddress)
+	if err != nil {
+		return err
+	}
+	if err := n.transport.Listen(*addr); err != nil {
+		return err
+	}
+
+	n.isListening = true
+
+	// Start the switch (the P2P server).
+	err = n.sw.Start()
+	if err != nil {
+		return err
+	}
+
+	// Always connect to persistent peers
+	if n.config.P2P.PersistentPeers != "" {
+		err = n.sw.DialPeersAsync(n.addrBook, splitAndTrimEmpty(n.config.P2P.PersistentPeers, ",", " "), true)
+		if err != nil {
+			return err
+		}
+	}*/
+
+	return nil
+}
+
+// OnStop stops the Node. It implements cmn.Service.
+func (n *Node) OnStop() {
+	n.BaseService.OnStop()
+
+	n.Logger.Info("Stopping Node")
+
+	// first stop the non-reactor services
+	n.eventBus.Stop()
+	//n.indexerService.Stop()
+
+	// now stop the reactors
+	// TODO: gracefully disconnect from peers.
+	//n.sw.Stop()
+
+	// stop mempool WAL
+	/*if n.config.Mempool.WalEnabled() {
+		n.mempoolReactor.Mempool.CloseWAL()
+	}
+
+	if err := n.transport.Close(); err != nil {
+		n.Logger.Error("Error closing transport", "err", err)
+	}
+
+	n.isListening = false
+	*/
+	// finally stop the listeners / external services
+	for _, l := range n.rpcListeners {
+		n.Logger.Info("Closing rpc listener", "listener", l)
+		if err := l.Close(); err != nil {
+			n.Logger.Error("Error closing listener", "listener", l, "err", err)
+		}
+	}
+
+	if pvsc, ok := n.privValidator.(cmn.Service); ok {
+		pvsc.Stop()
+	}
+
+	if n.prometheusSrv != nil {
+		if err := n.prometheusSrv.Shutdown(context.Background()); err != nil {
+			// Error from closing listeners, or context timeout:
+			n.Logger.Error("Prometheus HTTP server Shutdown", "err", err)
+		}
+	}
 }
 
 /*******************************************************************************
@@ -190,7 +524,7 @@ func (n *Node) Run(gossip bool) {
 	// The ControlTimer allows the background routines to control the heartbeat
 	// timer when the node is in the Babbling state. The timer should only be
 	// running when there are uncommitted transactions in the system.
-	go n.controlTimer.Run(n.conf.P2P.FlushThrottleTimeout)
+	go n.controlTimer.Run(n.config.P2P.FlushThrottleTimeout)
 
 	// Execute some background work regardless of the state of the node.
 	go n.doBackgroundWork()
@@ -228,7 +562,7 @@ func (n *Node) Leave() error {
 
 	defer n.Shutdown()
 
-	err := n.core.Leave(n.conf.P2P.HandshakeTimeout)
+	err := n.core.Leave(n.config.P2P.HandshakeTimeout)
 	if err != nil {
 		n.logger.Error("Leaving", "err", err)
 		return err
@@ -362,7 +696,7 @@ func (n *Node) resetTimer() {
 	defer n.coreLock.Unlock()
 
 	if !n.controlTimer.set {
-		ts := n.conf.P2P.FlushThrottleTimeout
+		ts := n.config.P2P.FlushThrottleTimeout
 
 		//Slow gossip if nothing interesting to say
 		if !n.core.Busy() {
@@ -615,8 +949,8 @@ func (n *Node) fastForward() error {
 
 // getBestFastForwardResponse performs a FastForwardRequest with all known peers
 // and only selects the one corresponding to the hightest block number.
-func (n *Node) getBestFastForwardResponse() *net.FastForwardResponse {
-	var bestResponse *net.FastForwardResponse
+func (n *Node) getBestFastForwardResponse() *bnet.FastForwardResponse {
+	var bestResponse *bnet.FastForwardResponse
 	maxBlock := 0
 
 	for _, p := range n.core.peerSelector.Peers().Peers {
@@ -750,50 +1084,50 @@ func (n *Node) syncRate() float64 {
 	return 1 - syncErrorRate
 }
 
-func (n *Node) requestSync(target string, known map[uint32]int, syncLimit int) (net.SyncResponse, error) {
-	args := net.SyncRequest{
+func (n *Node) requestSync(target string, known map[uint32]int, syncLimit int) (bnet.SyncResponse, error) {
+	args := bnet.SyncRequest{
 		FromID:    n.core.validator.ID(),
 		SyncLimit: syncLimit,
 		Known:     known,
 	}
 
-	var out net.SyncResponse
+	var out bnet.SyncResponse
 
 	err := n.trans.Sync(target, &args, &out)
 
 	return out, err
 }
 
-func (n *Node) requestEagerSync(target string, events []hashgraph.WireEvent) (net.EagerSyncResponse, error) {
-	args := net.EagerSyncRequest{
+func (n *Node) requestEagerSync(target string, events []hashgraph.WireEvent) (bnet.EagerSyncResponse, error) {
+	args := bnet.EagerSyncRequest{
 		FromID: n.core.validator.ID(),
 		Events: events,
 	}
 
-	var out net.EagerSyncResponse
+	var out bnet.EagerSyncResponse
 
 	err := n.trans.EagerSync(target, &args, &out)
 
 	return out, err
 }
 
-func (n *Node) requestFastForward(target string) (net.FastForwardResponse, error) {
+func (n *Node) requestFastForward(target string) (bnet.FastForwardResponse, error) {
 	n.logger.Debug("RequestFastForward()",
 		"target", target,
 	)
 
-	args := net.FastForwardRequest{
+	args := bnet.FastForwardRequest{
 		FromID: n.core.validator.ID(),
 	}
 
-	var out net.FastForwardResponse
+	var out bnet.FastForwardResponse
 
 	err := n.trans.FastForward(target, &args, &out)
 
 	return out, err
 }
 
-func (n *Node) requestJoin(target string) (net.JoinResponse, error) {
+func (n *Node) requestJoin(target string) (bnet.JoinResponse, error) {
 
 	joinTx := hashgraph.NewInternalTransactionJoin(*peers.NewPeer(
 		n.core.validator.PublicKeyHex(),
@@ -802,16 +1136,16 @@ func (n *Node) requestJoin(target string) (net.JoinResponse, error) {
 
 	joinTx.Sign(n.core.validator.Key)
 
-	args := net.JoinRequest{InternalTransaction: joinTx}
+	args := bnet.JoinRequest{InternalTransaction: joinTx}
 
-	var out net.JoinResponse
+	var out bnet.JoinResponse
 
 	err := n.trans.Join(target, &args, &out)
 
 	return out, err
 }
 
-func (n *Node) processRPC(rpc net.RPC) {
+func (n *Node) processRPC(rpc bnet.RPC) {
 	// Notify others that we are not in Babbling state to prevent
 	// them from hitting timeouts.
 	if n.state.state != Babbling {
@@ -821,13 +1155,13 @@ func (n *Node) processRPC(rpc net.RPC) {
 	}
 
 	switch cmd := rpc.Command.(type) {
-	case *net.SyncRequest:
+	case *bnet.SyncRequest:
 		n.processSyncRequest(rpc, cmd)
-	case *net.EagerSyncRequest:
+	case *bnet.EagerSyncRequest:
 		n.processEagerSyncRequest(rpc, cmd)
-	case *net.FastForwardRequest:
+	case *bnet.FastForwardRequest:
 		n.processFastForwardRequest(rpc, cmd)
-	case *net.JoinRequest:
+	case *bnet.JoinRequest:
 		n.processJoinRequest(rpc, cmd)
 	default:
 		n.logger.Error("Unexpected RPC command", "cmd", rpc.Command)
@@ -835,14 +1169,14 @@ func (n *Node) processRPC(rpc net.RPC) {
 	}
 }
 
-func (n *Node) processSyncRequest(rpc net.RPC, cmd *net.SyncRequest) {
+func (n *Node) processSyncRequest(rpc bnet.RPC, cmd *bnet.SyncRequest) {
 	n.logger.Debug("process SyncRequest",
 		"from_id", cmd.FromID,
 		"sync_limit", cmd.SyncLimit,
 		"known", cmd.Known,
 	)
 
-	resp := &net.SyncResponse{
+	resp := &bnet.SyncResponse{
 		FromID: n.core.validator.ID(),
 	}
 
@@ -911,7 +1245,7 @@ func min(a, b int) int {
 	return b
 }
 
-func (n *Node) processEagerSyncRequest(rpc net.RPC, cmd *net.EagerSyncRequest) {
+func (n *Node) processEagerSyncRequest(rpc bnet.RPC, cmd *bnet.EagerSyncRequest) {
 	n.logger.Debug("EagerSyncRequest",
 		"from_id", cmd.FromID,
 		"events", len(cmd.Events),
@@ -928,7 +1262,7 @@ func (n *Node) processEagerSyncRequest(rpc net.RPC, cmd *net.EagerSyncRequest) {
 		success = false
 	}
 
-	resp := &net.EagerSyncResponse{
+	resp := &bnet.EagerSyncResponse{
 		FromID:  n.core.validator.ID(),
 		Success: success,
 	}
@@ -936,12 +1270,12 @@ func (n *Node) processEagerSyncRequest(rpc net.RPC, cmd *net.EagerSyncRequest) {
 	rpc.Respond(resp, err)
 }
 
-func (n *Node) processFastForwardRequest(rpc net.RPC, cmd *net.FastForwardRequest) {
+func (n *Node) processFastForwardRequest(rpc bnet.RPC, cmd *bnet.FastForwardRequest) {
 	n.logger.Debug("process FastForwardRequest",
 		"from", cmd.FromID,
 	)
 
-	resp := &net.FastForwardResponse{
+	resp := &bnet.FastForwardResponse{
 		FromID: n.core.validator.ID(),
 	}
 
@@ -980,7 +1314,7 @@ func (n *Node) processFastForwardRequest(rpc net.RPC, cmd *net.FastForwardReques
 	rpc.Respond(resp, respErr)
 }
 
-func (n *Node) processJoinRequest(rpc net.RPC, cmd *net.JoinRequest) {
+func (n *Node) processJoinRequest(rpc bnet.RPC, cmd *bnet.JoinRequest) {
 	n.logger.Debug("process JoinRequest",
 		"peer", cmd.InternalTransaction.Body.Peer,
 	)
@@ -1018,7 +1352,7 @@ func (n *Node) processJoinRequest(rpc net.RPC, cmd *net.JoinRequest) {
 		n.coreLock.Unlock()
 
 		//Wait for the InternalTransaction to go through consensus
-		timeout := time.After(n.conf.P2P.DialTimeout)
+		timeout := time.After(n.config.P2P.DialTimeout)
 		select {
 		case resp := <-promise.RespCh:
 			accepted = resp.Accepted
@@ -1031,7 +1365,7 @@ func (n *Node) processJoinRequest(rpc net.RPC, cmd *net.JoinRequest) {
 		}
 	}
 
-	resp := &net.JoinResponse{
+	resp := &bnet.JoinResponse{
 		FromID:        n.core.validator.ID(),
 		Accepted:      accepted,
 		AcceptedRound: acceptedRound,
@@ -1046,4 +1380,258 @@ func (n *Node) processJoinRequest(rpc net.RPC, cmd *net.JoinRequest) {
 	)
 
 	rpc.Respond(resp, respErr)
+}
+
+// splitAndTrimEmpty slices s into all subslices separated by sep and returns a
+// slice of the string s with all leading and trailing Unicode code points
+// contained in cutset removed. If sep is empty, SplitAndTrim splits after each
+// UTF-8 sequence. First part is equivalent to strings.SplitN with a count of
+// -1.  also filter out empty strings, only return non-empty strings.
+func splitAndTrimEmpty(s, sep, cutset string) []string {
+	if s == "" {
+		return []string{}
+	}
+
+	spl := strings.Split(s, sep)
+	nonEmptyStrings := make([]string, 0, len(spl))
+	for i := 0; i < len(spl); i++ {
+		element := strings.Trim(spl[i], cutset)
+		if element != "" {
+			nonEmptyStrings = append(nonEmptyStrings, element)
+		}
+	}
+	return nonEmptyStrings
+}
+
+func (n *Node) startRPC() ([]net.Listener, error) {
+	n.ConfigureRPC()
+	listenAddrs := splitAndTrimEmpty(n.config.RPC.ListenAddress, ",", " ")
+	coreCodec := amino.NewCodec()
+	ctypes.RegisterAmino(coreCodec)
+
+	if n.config.RPC.Unsafe {
+		rpccore.AddUnsafeRoutes()
+	}
+
+	// we may expose the rpc over both a unix and tcp socket
+	listeners := make([]net.Listener, len(listenAddrs))
+	for i, listenAddr := range listenAddrs {
+		mux := http.NewServeMux()
+		rpcLogger := n.Logger.With("module", "rpc-server")
+		wmLogger := rpcLogger.With("protocol", "websocket")
+		wm := rpcserver.NewWebsocketManager(rpccore.Routes, coreCodec,
+			rpcserver.OnDisconnect(func(remoteAddr string) {
+				err := n.eventBus.UnsubscribeAll(context.Background(), remoteAddr)
+				if err != nil && err != tmpubsub.ErrSubscriptionNotFound {
+					wmLogger.Error("Failed to unsubscribe addr from events", "addr", remoteAddr, "err", err)
+				}
+			}))
+		wm.SetLogger(wmLogger)
+		mux.HandleFunc("/websocket", wm.WebsocketHandler)
+		rpcserver.RegisterRPCFuncs(mux, rpccore.Routes, coreCodec, rpcLogger)
+
+		config := rpcserver.DefaultConfig()
+		config.MaxOpenConnections = n.config.RPC.MaxOpenConnections
+		// If necessary adjust global WriteTimeout to ensure it's greater than
+		// TimeoutBroadcastTxCommit.
+		// See https://github.com/tendermint/tendermint/issues/3435
+		if config.WriteTimeout <= n.config.RPC.TimeoutBroadcastTxCommit {
+			config.WriteTimeout = n.config.RPC.TimeoutBroadcastTxCommit + 1*time.Second
+		}
+
+		listener, err := rpcserver.Listen(
+			listenAddr,
+			config,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		var rootHandler http.Handler = mux
+		if n.config.RPC.IsCorsEnabled() {
+			corsMiddleware := cors.New(cors.Options{
+				AllowedOrigins: n.config.RPC.CORSAllowedOrigins,
+				AllowedMethods: n.config.RPC.CORSAllowedMethods,
+				AllowedHeaders: n.config.RPC.CORSAllowedHeaders,
+			})
+			rootHandler = corsMiddleware.Handler(mux)
+		}
+		if n.config.RPC.IsTLSEnabled() {
+			go rpcserver.StartHTTPAndTLSServer(
+				listener,
+				rootHandler,
+				n.config.RPC.CertFile(),
+				n.config.RPC.KeyFile(),
+				rpcLogger,
+				config,
+			)
+		} else {
+			go rpcserver.StartHTTPServer(
+				listener,
+				rootHandler,
+				rpcLogger,
+				config,
+			)
+		}
+
+		listeners[i] = listener
+	}
+
+	// we expose a simplified api over grpc for convenience to app devs
+	grpcListenAddr := n.config.RPC.GRPCListenAddress
+	if grpcListenAddr != "" {
+		config := rpcserver.DefaultConfig()
+		config.MaxOpenConnections = n.config.RPC.MaxOpenConnections
+		listener, err := rpcserver.Listen(grpcListenAddr, config)
+		if err != nil {
+			return nil, err
+		}
+		go grpccore.StartGRPCServer(listener)
+		listeners = append(listeners, listener)
+	}
+
+	return listeners, nil
+}
+
+// startPrometheusServer starts a Prometheus HTTP server, listening for metrics
+// collectors on addr.
+func (n *Node) startPrometheusServer(addr string) *http.Server {
+	srv := &http.Server{
+		Addr: addr,
+		Handler: promhttp.InstrumentMetricHandler(
+			prometheus.DefaultRegisterer, promhttp.HandlerFor(
+				prometheus.DefaultGatherer,
+				promhttp.HandlerOpts{MaxRequestsInFlight: n.config.Instrumentation.MaxOpenConnections},
+			),
+		),
+	}
+	go func() {
+		if err := srv.ListenAndServe(); err != http.ErrServerClosed {
+			// Error starting or closing listener:
+			n.Logger.Error("Prometheus HTTP server ListenAndServe", "err", err)
+		}
+	}()
+	return srv
+}
+
+// ConfigureRPC sets all variables in rpccore so they will serve
+// rpc calls from this node
+func (n *Node) ConfigureRPC() {
+	//rpccore.SetP2PTransport(n)
+	pubKey := n.privValidator.GetPubKey()
+	rpccore.SetPubKey(pubKey)
+	rpccore.SetGenesisDoc(n.genesisDoc)
+	rpccore.SetAddrBook(n.addrBook)
+	rpccore.SetProxyAppQuery(n.proxyApp.Query())
+	rpccore.SetTxIndexer(n.txIndexer)
+	rpccore.SetEventBus(n.eventBus)
+	rpccore.SetLogger(n.Logger.With("module", "rpc"))
+	rpccore.SetConfig(*n.config.RPC)
+}
+
+var (
+	genesisDocKey = []byte("genesisDoc")
+)
+
+var cdc = amino.NewCodec()
+
+// panics if failed to unmarshal bytes
+func loadGenesisDoc(db dbm.DB) (*types.GenesisDoc, error) {
+	bytes := db.Get(genesisDocKey)
+	if len(bytes) == 0 {
+		return nil, errors.New("Genesis doc not found")
+	}
+	var genDoc *types.GenesisDoc
+	err := cdc.UnmarshalJSON(bytes, &genDoc)
+	if err != nil {
+		cmn.PanicCrisis(fmt.Sprintf("Failed to load genesis doc due to unmarshaling error: %v (bytes: %X)", err, bytes))
+	}
+	return genDoc, nil
+}
+
+// panics if failed to marshal the given genesis document
+func saveGenesisDoc(db dbm.DB, genDoc *types.GenesisDoc) {
+	bytes, err := cdc.MarshalJSON(genDoc)
+	if err != nil {
+		cmn.PanicCrisis(fmt.Sprintf("Failed to save genesis doc due to marshaling error: %v", err))
+	}
+	db.SetSync(genesisDocKey, bytes)
+}
+
+func createAndStartPrivValidatorSocketClient(
+	listenAddr string,
+	logger log.Logger,
+) (types.PrivValidator, error) {
+	var listener net.Listener
+
+	protocol, address := cmn.ProtocolAndAddress(listenAddr)
+	ln, err := net.Listen(protocol, address)
+	if err != nil {
+		return nil, err
+	}
+	switch protocol {
+	case "unix":
+		listener = privval.NewUnixListener(ln)
+	case "tcp":
+		// TODO: persist this key so external signer
+		// can actually authenticate us
+		listener = privval.NewTCPListener(ln, ed25519.GenPrivKey())
+	default:
+		return nil, fmt.Errorf(
+			"Wrong listen address: expected either 'tcp' or 'unix' protocols, got %s",
+			protocol,
+		)
+	}
+
+	pvsc := privval.NewSignerValidatorEndpoint(logger.With("module", "privval"), listener)
+	if err := pvsc.Start(); err != nil {
+		return nil, errors.Wrap(err, "failed to start private validator")
+	}
+
+	return pvsc, nil
+}
+
+func makeNodeInfo(
+	config *cfg.Config,
+	nodeID p2p.ID,
+	txIndexer txindex.TxIndexer,
+	chainID string,
+	protocolVersion p2p.ProtocolVersion,
+) (p2p.NodeInfo, error) {
+	txIndexerStatus := "on"
+	if _, ok := txIndexer.(*null.TxIndex); ok {
+		txIndexerStatus = "off"
+	}
+	nodeInfo := p2p.DefaultNodeInfo{
+		ProtocolVersion: protocolVersion,
+		ID_:             nodeID,
+		Network:         chainID,
+		Version:         version.TMCoreSemVer,
+		Channels: []byte{
+			bc.BlockchainChannel,
+			cs.StateChannel, cs.DataChannel, cs.VoteChannel, cs.VoteSetBitsChannel,
+			mempl.MempoolChannel,
+			evidence.EvidenceChannel,
+		},
+		Moniker: config.Moniker,
+		Other: p2p.DefaultNodeInfoOther{
+			TxIndex:    txIndexerStatus,
+			RPCAddress: config.RPC.ListenAddress,
+		},
+	}
+
+	if config.P2P.PexReactor {
+		nodeInfo.Channels = append(nodeInfo.Channels, pex.PexChannel)
+	}
+
+	lAddr := config.P2P.ExternalAddress
+
+	if lAddr == "" {
+		lAddr = config.P2P.ListenAddress
+	}
+
+	nodeInfo.ListenAddr = lAddr
+
+	err := nodeInfo.Validate()
+	return nodeInfo, err
 }
