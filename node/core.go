@@ -11,8 +11,8 @@ import (
 	"github.com/andrecronje/babble/src/common"
 	b "github.com/andrecronje/babble/src/node"
 	"github.com/andrecronje/babble/src/peers"
-	"github.com/andrecronje/tendermint/libs/log"
-	"github.com/andrecronje/tendermint/proxy"
+	"github.com/tendermint/tendermint/libs/log"
+	"github.com/tendermint/tendermint/proxy"
 )
 
 //Core is the core Node object

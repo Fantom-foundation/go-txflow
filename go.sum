@@ -5,6 +5,8 @@ github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03
 github.com/aead/siphash v1.0.1/go.mod h1:Nywa3cDsYNNK3gaciGTWPwHt0wlpNV15vwmswBAUSII=
 github.com/alecthomas/template v0.0.0-20160405071501-a0175ee3bccc/go.mod h1:LOuyumcjzFXgccqObfd/Ljyb9UuFJ6TxHnclSeseNhc=
 github.com/alecthomas/units v0.0.0-20151022065526-2efee857e7cf/go.mod h1:ybxpYRFXyAe+OPACYpWeL0wqObRcbAqCMya13uyzqw0=
+github.com/andrecronje/babble v0.0.0-20190612124650-437c9e231e30 h1:y0vCT+EAbIfFlVvjDRmj4MZUf4Vx1NczoYObiItjsl4=
+github.com/andrecronje/babble v0.0.0-20190612124650-437c9e231e30/go.mod h1:dlDiMy/3TiB5GNj6G4uvYrADrv/sJuB9mHP/xGxA9AY=
 github.com/andrecronje/babble v0.4.1 h1:v3k5PUSsagKYc6DgQk6hD9HpM0pFNbwMxvxqNqcNEhE=
 github.com/andrecronje/babble/src v0.0.0-20190608141936-385bd4064e31 h1:G6RVDW/bQC+WXnDEWicbBSWF9Pum8bxYV9+I0RJxnok=
 github.com/andrecronje/babble/src v0.0.0-20190608141936-385bd4064e31/go.mod h1:NlwlaSxnpwHVb25OLYC+vOt1oQz8MYnnkyBF+x9hHmI=
