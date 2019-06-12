@@ -16,6 +16,7 @@ import (
 	"github.com/andrecronje/babble/src/service"
 
 	cfg "github.com/tendermint/tendermint/config"
+	cmn "github.com/tendermint/tendermint/libs/common"
 	dbm "github.com/tendermint/tendermint/libs/db"
 	"github.com/tendermint/tendermint/libs/log"
 	"github.com/tendermint/tendermint/p2p"
@@ -25,6 +26,7 @@ import (
 
 // Node defines a babble node
 type Node struct {
+	cmn.BaseService
 	// Node operations are implemented as a state-machine. The embedded state
 	// object is used to manage the node's state.
 	state
