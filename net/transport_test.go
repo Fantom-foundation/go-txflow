@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/andrecronje/babble-abci/hashgraph"
-	"github.com/mosaicnetworks/babble/src/common"
-	"github.com/mosaicnetworks/babble/src/peers"
+	"github.com/andrecronje/babble/src/common"
+	"github.com/andrecronje/babble/src/peers"
 )
 
 const (

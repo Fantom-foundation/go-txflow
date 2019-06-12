@@ -3,9 +3,9 @@ package hashgraph
 import (
 	"fmt"
 
+	cm "github.com/andrecronje/babble/src/common"
+	"github.com/andrecronje/babble/src/peers"
 	"github.com/dgraph-io/badger"
-	cm "github.com/mosaicnetworks/babble/src/common"
-	"github.com/mosaicnetworks/babble/src/peers"
 )
 
 const (

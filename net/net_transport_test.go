@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/andrecronje/babble-abci/hashgraph"
-	"github.com/mosaicnetworks/babble/src/common"
+	"github.com/andrecronje/babble/src/common"
 )
 
 func TestNetworkTransport_PooledConn(t *testing.T) {

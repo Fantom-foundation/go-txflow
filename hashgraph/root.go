@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 
-	"github.com/mosaicnetworks/babble/src/common"
-	"github.com/mosaicnetworks/babble/src/crypto"
+	"github.com/andrecronje/babble/src/common"
+	"github.com/andrecronje/babble/src/crypto"
 )
 
 //Root forms a base on top of which a participant's Events can be inserted. It

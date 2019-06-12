@@ -7,9 +7,9 @@ import (
 	"strconv"
 	"strings"
 
-	cm "github.com/mosaicnetworks/babble/src/common"
-	"github.com/mosaicnetworks/babble/src/hashgraph"
-	"github.com/mosaicnetworks/babble/src/peers"
+	cm "github.com/andrecronje/babble/src/common"
+	"github.com/andrecronje/babble/src/hashgraph"
+	"github.com/andrecronje/babble/src/peers"
 )
 
 type Key struct {

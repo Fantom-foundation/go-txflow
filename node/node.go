@@ -11,9 +11,9 @@ import (
 
 	"github.com/andrecronje/babble-abci/hashgraph"
 	"github.com/andrecronje/babble-abci/net"
-	b "github.com/mosaicnetworks/babble/src/node"
-	"github.com/mosaicnetworks/babble/src/peers"
-	"github.com/mosaicnetworks/babble/src/service"
+	b "github.com/andrecronje/babble/src/node"
+	"github.com/andrecronje/babble/src/peers"
+	"github.com/andrecronje/babble/src/service"
 
 	cfg "github.com/tendermint/tendermint/config"
 	dbm "github.com/tendermint/tendermint/libs/db"
