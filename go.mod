@@ -13,6 +13,7 @@ require (
 	github.com/prometheus/client_golang v0.9.4
 	github.com/rs/cors v1.6.0
 	github.com/sirupsen/logrus v1.4.2
+	github.com/stretchr/testify v1.3.0
 	github.com/syndtr/goleveldb v1.0.0 // indirect
 	github.com/tendermint/go-amino v0.15.0
 	github.com/tendermint/tendermint v0.31.2-0.20190419114611-4253e67c07c6

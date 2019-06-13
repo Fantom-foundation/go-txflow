@@ -18,39 +18,40 @@ import (
 	b "github.com/andrecronje/babble/src/node"
 	"github.com/andrecronje/babble/src/peers"
 	"github.com/andrecronje/babble/src/service"
+
+	_ "net/http/pprof"
+
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rs/cors"
-	mempl "github.com/tendermint/tendermint/mempool"
 
-	"github.com/tendermint/go-amino"
+	amino "github.com/tendermint/go-amino"
+	bc "github.com/tendermint/tendermint/blockchain"
 	cfg "github.com/tendermint/tendermint/config"
+	cs "github.com/tendermint/tendermint/consensus"
 	"github.com/tendermint/tendermint/crypto/ed25519"
 	"github.com/tendermint/tendermint/evidence"
 	cmn "github.com/tendermint/tendermint/libs/common"
 	dbm "github.com/tendermint/tendermint/libs/db"
 	"github.com/tendermint/tendermint/libs/log"
+	tmpubsub "github.com/tendermint/tendermint/libs/pubsub"
+	mempl "github.com/tendermint/tendermint/mempool"
 	"github.com/tendermint/tendermint/p2p"
 	"github.com/tendermint/tendermint/p2p/pex"
 	"github.com/tendermint/tendermint/privval"
 	"github.com/tendermint/tendermint/proxy"
+	rpccore "github.com/tendermint/tendermint/rpc/core"
+	ctypes "github.com/tendermint/tendermint/rpc/core/types"
+	grpccore "github.com/tendermint/tendermint/rpc/grpc"
+	rpcserver "github.com/tendermint/tendermint/rpc/lib/server"
+	sm "github.com/tendermint/tendermint/state"
 	"github.com/tendermint/tendermint/state/txindex"
 	"github.com/tendermint/tendermint/state/txindex/kv"
 	"github.com/tendermint/tendermint/state/txindex/null"
 	"github.com/tendermint/tendermint/types"
 	tmtime "github.com/tendermint/tendermint/types/time"
 	"github.com/tendermint/tendermint/version"
-
-	bc "github.com/tendermint/tendermint/blockchain"
-	tmpubsub "github.com/tendermint/tendermint/libs/pubsub"
-	rpccore "github.com/tendermint/tendermint/rpc/core"
-	ctypes "github.com/tendermint/tendermint/rpc/core/types"
-	grpccore "github.com/tendermint/tendermint/rpc/grpc"
-	rpcserver "github.com/tendermint/tendermint/rpc/lib/server"
-
-	cs "github.com/tendermint/tendermint/consensus"
-	sm "github.com/tendermint/tendermint/state"
 )
 
 // Node defines a babble node
@@ -192,6 +193,47 @@ type DBProvider func(*DBContext) (dbm.DB, error)
 func DefaultDBProvider(ctx *DBContext) (dbm.DB, error) {
 	dbType := dbm.DBBackendType(ctx.Config.DBBackend)
 	return dbm.NewDB(ctx.ID, dbType, ctx.Config.DBDir()), nil
+}
+
+// NodeProvider takes a config and a logger and returns a ready to go Node.
+type NodeProvider func(*cfg.Config, log.Logger) (*Node, error)
+
+// DefaultNewNode returns a Tendermint node with default settings for the
+// PrivValidator, ClientCreator, GenesisDoc, and DBProvider.
+// It implements NodeProvider.
+func DefaultNewNode(config *cfg.Config, logger log.Logger) (*Node, error) {
+	// Generate node PrivKey
+	nodeKey, err := p2p.LoadOrGenNodeKey(config.NodeKeyFile())
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert old PrivValidator if it exists.
+	oldPrivVal := config.OldPrivValidatorFile()
+	newPrivValKey := config.PrivValidatorKeyFile()
+	newPrivValState := config.PrivValidatorStateFile()
+	if _, err := os.Stat(oldPrivVal); !os.IsNotExist(err) {
+		oldPV, err := privval.LoadOldFilePV(oldPrivVal)
+		if err != nil {
+			return nil, fmt.Errorf("Error reading OldPrivValidator from %v: %v\n", oldPrivVal, err)
+		}
+		logger.Info("Upgrading PrivValidator file",
+			"old", oldPrivVal,
+			"newKey", newPrivValKey,
+			"newState", newPrivValState,
+		)
+		oldPV.Upgrade(newPrivValKey, newPrivValState)
+	}
+
+	return NewNode(config,
+		privval.LoadOrGenFilePV(newPrivValKey, newPrivValState),
+		nodeKey,
+		proxy.DefaultClientCreator(config.ProxyApp, config.ABCI, config.DBDir()),
+		DefaultGenesisDocProviderFunc(config),
+		DefaultDBProvider,
+		DefaultMetricsProvider(config.Instrumentation),
+		logger,
+	)
 }
 
 // NewNode is a factory method that returns a Tendermint Node instance
@@ -405,7 +447,8 @@ func (n *Node) OnStart() error {
 	}
 
 	// Add private IDs to addrbook to block those peers being added
-	n.addrBook.AddPrivateIDs(splitAndTrimEmpty(n.config.P2P.PrivatePeerIDs, ",", " "))
+
+	//n.addrBook.AddPrivateIDs(splitAndTrimEmpty(n.config.P2P.PrivatePeerIDs, ",", " "))
 
 	// Start the RPC server before the P2P server
 	// so we can eg. receive txs for the first block
@@ -1533,8 +1576,6 @@ var (
 	genesisDocKey = []byte("genesisDoc")
 )
 
-var cdc = amino.NewCodec()
-
 // panics if failed to unmarshal bytes
 func loadGenesisDoc(db dbm.DB) (*types.GenesisDoc, error) {
 	bytes := db.Get(genesisDocKey)
@@ -1553,7 +1594,7 @@ func loadGenesisDoc(db dbm.DB) (*types.GenesisDoc, error) {
 func saveGenesisDoc(db dbm.DB, genDoc *types.GenesisDoc) {
 	bytes, err := cdc.MarshalJSON(genDoc)
 	if err != nil {
-		cmn.PanicCrisis(fmt.Sprintf("Failed to save genesis doc due to marshaling error: %v", err))
+		cmn.PanicCrisis(fmt.Sprintf("Failed to save genesis doc due to marshaling error: %v %v", err, genDoc))
 	}
 	db.SetSync(genesisDocKey, bytes)
 }
@@ -1634,4 +1675,30 @@ func makeNodeInfo(
 
 	err := nodeInfo.Validate()
 	return nodeInfo, err
+}
+
+// EventBus returns the Node's EventBus.
+func (n *Node) EventBus() *types.EventBus {
+	return n.eventBus
+}
+
+// PrivValidator returns the Node's PrivValidator.
+// XXX: for convenience only!
+func (n *Node) PrivValidator() types.PrivValidator {
+	return n.privValidator
+}
+
+// GenesisDoc returns the Node's GenesisDoc.
+func (n *Node) GenesisDoc() *types.GenesisDoc {
+	return n.genesisDoc
+}
+
+// ProxyApp returns the Node's AppConns, representing its connections to the ABCI application.
+func (n *Node) ProxyApp() proxy.AppConns {
+	return n.proxyApp
+}
+
+// Config returns the Node's config.
+func (n *Node) Config() *cfg.Config {
+	return n.config
 }
