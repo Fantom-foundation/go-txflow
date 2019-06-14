@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sirupsen/logrus"
+	"github.com/tendermint/tendermint/libs/log"
 )
 
 /*******************************************************************************
@@ -45,7 +45,7 @@ The response is an error string followed by the response object,
 both are encoded using msgpack
 */
 type NetworkTransport struct {
-	logger *logrus.Logger
+	logger log.Logger
 
 	connPool     map[string][]*netConn
 	connPoolLock sync.Mutex
@@ -93,12 +93,8 @@ func NewNetworkTransport(
 	maxPool int,
 	timeout time.Duration,
 	joinTimeout time.Duration,
-	logger *logrus.Logger,
+	logger log.Logger,
 ) *NetworkTransport {
-	if logger == nil {
-		logger = logrus.New()
-		logger.Level = logrus.DebugLevel
-	}
 	trans := &NetworkTransport{
 		connPool:    make(map[string][]*netConn),
 		consumeCh:   make(chan RPC),
@@ -306,13 +302,13 @@ func (n *NetworkTransport) listen() {
 			if n.IsShutdown() {
 				return
 			}
-			n.logger.WithField("error", err).Error("Failed to accept connection")
+			n.logger.Error("Failed to accept connection", "error", err)
 			continue
 		}
-		n.logger.WithFields(logrus.Fields{
-			"node": conn.LocalAddr(),
-			"from": conn.RemoteAddr(),
-		}).Debug("accepted connection")
+		n.logger.Debug("accepted connection",
+			"node", conn.LocalAddr(),
+			"from", conn.RemoteAddr(),
+		)
 
 		// Handle the connection in dedicated routine
 		go n.handleConn(conn)
@@ -330,12 +326,12 @@ func (n *NetworkTransport) handleConn(conn net.Conn) {
 	for {
 		if err := n.handleCommand(r, dec, enc); err != nil {
 			if err != io.EOF {
-				n.logger.WithField("error", err).Error("Failed to decode incoming command")
+				n.logger.Error("Failed to decode incoming command", "error", err)
 			}
 			return
 		}
 		if err := w.Flush(); err != nil {
-			n.logger.WithField("error", err).Error("Failed to flush response")
+			n.logger.Error("Failed to flush response", "error", err)
 			return
 		}
 	}

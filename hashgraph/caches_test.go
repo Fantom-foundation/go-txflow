@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	cm "github.com/andrecronje/babble/src/common"
-	"github.com/andrecronje/babble/src/peers"
+	"github.com/andrecronje/babble-abci/peers"
 )
 
 func TestParticipantEventsCache(t *testing.T) {

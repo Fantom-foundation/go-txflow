@@ -11,7 +11,7 @@ import (
 
 	"github.com/andrecronje/babble/src/common"
 	bkeys "github.com/andrecronje/babble/src/crypto/keys"
-	"github.com/andrecronje/babble/src/peers"
+	"github.com/andrecronje/babble-abci/peers"
 	"github.com/tendermint/tendermint/libs/log"
 )
 

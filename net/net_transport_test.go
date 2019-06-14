@@ -1,18 +1,24 @@
 package net
 
 import (
+	"os"
 	"reflect"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/andrecronje/babble-abci/hashgraph"
-	"github.com/andrecronje/babble/src/common"
+
+	"github.com/tendermint/tendermint/libs/log"
 )
+
+func testLogger(t testing.TB) log.Logger {
+	return log.NewTMLogger(log.NewSyncWriter(os.Stdout)).With("id", "test")
+}
 
 func TestNetworkTransport_PooledConn(t *testing.T) {
 	// Transport 1 is consumer
-	trans1, err := NewTCPTransport("127.0.0.1:0", nil, 2, time.Second, 2*time.Second, common.NewTestLogger(t))
+	trans1, err := NewTCPTransport("127.0.0.1:0", nil, 2, time.Second, 2*time.Second, testLogger(t))
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -69,7 +75,7 @@ func TestNetworkTransport_PooledConn(t *testing.T) {
 	}()
 
 	// Transport 2 makes outbound request, 3 conn pool
-	trans2, err := NewTCPTransport("127.0.0.1:0", nil, 3, time.Second, 2*time.Second, common.NewTestLogger(t))
+	trans2, err := NewTCPTransport("127.0.0.1:0", nil, 3, time.Second, 2*time.Second, testLogger(t))
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}

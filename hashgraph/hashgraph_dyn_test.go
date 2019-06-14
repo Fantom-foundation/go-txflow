@@ -7,7 +7,7 @@ import (
 
 	"github.com/andrecronje/babble/src/common"
 	"github.com/andrecronje/babble/src/crypto/keys"
-	"github.com/andrecronje/babble/src/peers"
+	"github.com/andrecronje/babble-abci/peers"
 )
 
 /*

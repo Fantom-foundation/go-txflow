@@ -6,8 +6,7 @@ import (
 	"time"
 
 	"github.com/andrecronje/babble-abci/hashgraph"
-	"github.com/andrecronje/babble/src/common"
-	"github.com/andrecronje/babble/src/peers"
+	"github.com/andrecronje/babble-abci/peers"
 )
 
 const (
@@ -22,7 +21,7 @@ func NewTestTransport(ttype int, addr string, t *testing.T) Transport {
 		_, it := NewInmemTransport(addr)
 		return it
 	case TCP:
-		tt, err := NewTCPTransport(addr, nil, 2, time.Second, 2*time.Second, common.NewTestLogger(t))
+		tt, err := NewTCPTransport(addr, nil, 2, time.Second, 2*time.Second, testLogger(t))
 		if err != nil {
 			t.Fatal(err)
 		}

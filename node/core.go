@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/andrecronje/babble-abci/hashgraph"
+	"github.com/andrecronje/babble-abci/peers"
 	"github.com/andrecronje/babble/src/common"
 	b "github.com/andrecronje/babble/src/node"
-	"github.com/andrecronje/babble/src/peers"
 	"github.com/tendermint/tendermint/libs/log"
 	"github.com/tendermint/tendermint/proxy"
 )
@@ -38,7 +38,7 @@ type Core struct {
 	peers *peers.PeerSet
 
 	// peerSelector is the object that decides which peer to talk to next.
-	peerSelector b.PeerSelector
+	peerSelector PeerSelector
 	selectorLock sync.Mutex
 
 	// Hash and Index of this instance's head Event
@@ -98,7 +98,7 @@ func NewCore(
 	proxyCommitCallback proxy.AppConnConsensus,
 	logger log.Logger) *Core {
 
-	peerSelector := b.NewRandomPeerSelector(peers, validator.ID())
+	peerSelector := NewRandomPeerSelector(peers, validator.ID())
 
 	core := &Core{
 		validator:               validator,
@@ -173,7 +173,7 @@ func (c *Core) Bootstrap() error {
 // SetPeers sets the peers property and a New RandomPeerSelector
 func (c *Core) SetPeers(ps *peers.PeerSet) {
 	c.peers = ps
-	c.peerSelector = b.NewRandomPeerSelector(c.peers, c.validator.ID())
+	c.peerSelector = NewRandomPeerSelector(c.peers, c.validator.ID())
 }
 
 /*******************************************************************************

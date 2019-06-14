@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/andrecronje/babble/src/crypto/keys"
-	"github.com/andrecronje/babble/src/peers"
+	"github.com/andrecronje/babble-abci/peers"
 )
 
 func createTestBlock() *Block {

@@ -1,6 +1,6 @@
 package hashgraph
 
-import "github.com/andrecronje/babble/src/peers"
+import "github.com/andrecronje/babble-abci/peers"
 
 type Store interface {
 	CacheSize() int

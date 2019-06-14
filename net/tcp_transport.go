@@ -5,7 +5,7 @@ import (
 	"net"
 	"time"
 
-	"github.com/sirupsen/logrus"
+	"github.com/tendermint/tendermint/libs/log"
 )
 
 var (
@@ -51,7 +51,7 @@ func NewTCPTransport(
 	maxPool int,
 	timeout time.Duration,
 	joinTimeout time.Duration,
-	logger *logrus.Logger,
+	logger log.Logger,
 ) (*NetworkTransport, error) {
 	return newTCPTransport(bindAddr, advertise, maxPool, timeout, joinTimeout, func(stream StreamLayer) *NetworkTransport {
 		return NewNetworkTransport(stream, maxPool, timeout, joinTimeout, logger)

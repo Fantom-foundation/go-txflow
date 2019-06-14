@@ -15,8 +15,7 @@ import (
 
 	"github.com/andrecronje/babble-abci/hashgraph"
 	bnet "github.com/andrecronje/babble-abci/net"
-	b "github.com/andrecronje/babble/src/node"
-	"github.com/andrecronje/babble/src/peers"
+	"github.com/andrecronje/babble-abci/peers"
 	"github.com/andrecronje/babble/src/service"
 
 	_ "net/http/pprof"
@@ -53,6 +52,8 @@ import (
 	tmtime "github.com/tendermint/tendermint/types/time"
 	"github.com/tendermint/tendermint/version"
 )
+
+const DefaultKeyfile = "priv_key"
 
 // Node defines a babble node
 type Node struct {
@@ -124,35 +125,6 @@ type Node struct {
 	nodeInfo    p2p.NodeInfo
 	nodeKey     *p2p.NodeKey // our node privkey
 	isListening bool
-}
-
-// NewInAppNode is a factory method that returns a Node instance
-func NewInAppNode(config *cfg.Config,
-	validator *b.Validator,
-	peers *peers.PeerSet,
-	genesisPeers *peers.PeerSet,
-	store hashgraph.Store,
-	trans bnet.Transport,
-	proxy proxy.AppConnConsensus,
-	logger log.Logger,
-) *Node {
-	//Prepare sigintCh to relay SIGINT system calls
-	sigintCh := make(chan os.Signal)
-	signal.Notify(sigintCh, os.Interrupt, syscall.SIGINT)
-
-	node := Node{
-		config:       config,
-		logger:       logger,
-		core:         NewCore(validator, peers, genesisPeers, store, proxy, logger),
-		trans:        trans,
-		netCh:        trans.Consumer(),
-		proxy:        proxy,
-		sigintCh:     sigintCh,
-		shutdownCh:   make(chan struct{}),
-		controlTimer: NewRandomControlTimer(),
-	}
-
-	return &node
 }
 
 // MetricsProvider returns a consensus, p2p and mempool Metrics.
@@ -326,12 +298,12 @@ func NewNode(config *cfg.Config,
 	// Create the handshaker, which calls RequestInfo, sets the AppVersion on the state,
 	// and replays any blocks as necessary to sync tendermint with the app.
 	consensusLogger := logger.With("module", "consensus")
-	handshaker := cs.NewHandshaker(stateDB, state, blockStore, genDoc)
+	/*handshaker := cs.NewHandshaker(stateDB, state, blockStore, genDoc)
 	handshaker.SetLogger(consensusLogger)
 	handshaker.SetEventBus(eventBus)
 	if err := handshaker.Handshake(proxyApp); err != nil {
 		return nil, fmt.Errorf("Error during handshake: %v", err)
-	}
+	}*/
 
 	// Reload the state. It will have the Version.Consensus.App set by the
 	// Handshake, and may have other modifications as well (ie. depending on
@@ -353,7 +325,7 @@ func NewNode(config *cfg.Config,
 		)
 	}
 
-	if config.PrivValidatorListenAddr != "" {
+	/*if config.PrivValidatorListenAddr != "" {
 		// If an address is provided, listen on the socket for a connection from an
 		// external signing process.
 		// FIXME: we should start services inside OnStart
@@ -361,7 +333,7 @@ func NewNode(config *cfg.Config,
 		if err != nil {
 			return nil, errors.Wrap(err, "Error with private validator socket client")
 		}
-	}
+	}*/
 
 	// Decide whether to fast-sync or not
 	// We don't fast-sync when the only validator is us.
@@ -418,6 +390,81 @@ func NewNode(config *cfg.Config,
 		}()
 	}
 
+	//Prepare sigintCh to relay SIGINT system calls
+	sigintCh := make(chan os.Signal)
+	signal.Notify(sigintCh, os.Interrupt, syscall.SIGINT)
+
+	//addrBook := pex.NewAddrBook(config.P2P.AddrBookFile(), config.P2P.AddrBookStrict)
+
+	//logger.Debug("config:", "addrBook", addrBook)
+
+	participants := peers.NewPeerSetFromValidators(state.Validators.Validators)
+	// Set Genesis Peer Set from peers.genesis.json
+
+	genesisPeerStore := peers.NewJSONPeerSet(config.BaseConfig.RootDir, false)
+	genesisParticipants, err := genesisPeerStore.PeerSet()
+	if err != nil { // If there is any error, the current peer set is used as the genesis peer set
+		logger.Debug("could not read peers.genesis.json:", "err", err)
+		genesisParticipants = participants
+	}
+
+	validator := NewValidator(nodeKey.PrivKey, config.BaseConfig.Moniker)
+
+	p, ok := participants.ByID[validator.ID()]
+	if ok {
+		if p.Moniker != validator.Moniker {
+			logger.Debug("Using moniker from peers.json file",
+				"json_moniker", p.Moniker,
+				"cli_moniker", validator.Moniker,
+			)
+			validator.Moniker = p.Moniker
+		}
+	}
+
+	logger.Debug("PARTICIPANTS",
+		"genesis_peers", len(genesisParticipants.Peers),
+		"peers", len(participants.Peers),
+		"id", validator.ID(),
+		"moniker", validator.Moniker,
+	)
+
+	transport, err := bnet.NewTCPTransport(
+		config.P2P.ListenAddress,
+		nil,
+		config.P2P.MaxNumInboundPeers,
+		config.P2P.DialTimeout,
+		config.P2P.HandshakeTimeout,
+		logger,
+	)
+
+	if err != nil {
+		logger.Debug("bnet.NewTCPTransport", "err", err)
+		return nil, err
+	}
+
+	logger.Debug("BadgerDB", "path", config.BaseConfig.DBDir())
+	dbpath := config.BaseConfig.DBDir()
+	i := 1
+
+	for {
+		if _, err := os.Stat(dbpath); err == nil {
+			logger.Debug("already exists", dbpath)
+
+			dbpath = fmt.Sprintf("%s(%d)", config.BaseConfig.DBDir(), i)
+			logger.Debug("No Bootstrap - using new db", dbpath)
+			i++
+		} else {
+			break
+		}
+	}
+
+	logger.Debug("Creating BadgerStore", "path", dbpath)
+
+	dbStore, err := hashgraph.NewBadgerStore(config.Mempool.CacheSize, dbpath)
+	if err != nil {
+		return nil, err
+	}
+
 	node := &Node{
 		config:        config,
 		genesisDoc:    genDoc,
@@ -433,6 +480,15 @@ func NewNode(config *cfg.Config,
 		txIndexer:      txIndexer,
 		indexerService: indexerService,
 		eventBus:       eventBus,
+
+		logger:       logger,
+		core:         NewCore(validator, participants, genesisParticipants, dbStore, proxyApp.Consensus(), logger),
+		trans:        transport,
+		netCh:        transport.Consumer(),
+		proxy:        proxyApp.Consensus(),
+		sigintCh:     sigintCh,
+		shutdownCh:   make(chan struct{}),
+		controlTimer: NewRandomControlTimer(),
 	}
 	node.BaseService = *cmn.NewBaseService(logger, "Node", node)
 	return node, nil

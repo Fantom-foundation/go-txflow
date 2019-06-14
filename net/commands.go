@@ -2,7 +2,7 @@ package net
 
 import (
 	"github.com/andrecronje/babble-abci/hashgraph"
-	"github.com/andrecronje/babble/src/peers"
+	"github.com/andrecronje/babble-abci/peers"
 )
 
 //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
