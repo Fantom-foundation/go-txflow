@@ -45,7 +45,7 @@ func (s *State) CacheSize() int {
 	return s.cacheSize
 }
 
-func (s *State) GetValidatorSet(round int) (*types.ValidatorSet, error) {
+func (s *State) GetValidatorSet(round int64) (*types.ValidatorSet, error) {
 	return s.validatorSetCache.Get(round)
 }
 
@@ -82,7 +82,7 @@ func (s *State) GetAllValidatorSets() (map[int][]*types.Validator, error) {
 	return s.validatorSetCache.GetAll()
 }
 
-func (s *State) FirstRound(id uint32) (int, bool) {
+func (s *State) FirstRound(id string) (int, bool) {
 	return s.validatorSetCache.FirstRound(id)
 }
 
@@ -118,11 +118,11 @@ func (s *State) SetEvent(event *Event) error {
 	return nil
 }
 
-func (s *State) ValidatorEvents(validator string, skip int) ([]string, error) {
+func (s *State) ValidatorEvents(validator string, skip int64) ([]string, error) {
 	return s.validatorEventsCache.Get(validator, skip)
 }
 
-func (s *State) ValidatorEvent(validator string, index int) (string, error) {
+func (s *State) ValidatorEvent(validator string, index int64) (string, error) {
 	return s.validatorEventsCache.GetItem(validator, index)
 }
 
@@ -160,7 +160,7 @@ func (s *State) AddConsensusEvent(event *Event) error {
 	return nil
 }
 
-func (s *State) GetRound(r int) (*RoundInfo, error) {
+func (s *State) GetRound(r int64) (*RoundInfo, error) {
 	res, ok := s.roundCache.Get(r)
 	if !ok {
 		return nil, cm.NewStoreErr("RoundCache", cm.KeyNotFound, strconv.Itoa(r))
@@ -168,7 +168,7 @@ func (s *State) GetRound(r int) (*RoundInfo, error) {
 	return res.(*RoundInfo), nil
 }
 
-func (s *State) SetRound(r int, round *RoundInfo) error {
+func (s *State) SetRound(r int64, round *RoundInfo) error {
 	s.roundCache.Add(r, round)
 	if r > s.lastRound {
 		s.lastRound = r
@@ -176,11 +176,11 @@ func (s *State) SetRound(r int, round *RoundInfo) error {
 	return nil
 }
 
-func (s *State) LastRound() int {
+func (s *State) LastRound() int64 {
 	return s.lastRound
 }
 
-func (s *State) RoundWitnesses(r int) []string {
+func (s *State) RoundWitnesses(r int64) []string {
 	round, err := s.GetRound(r)
 	if err != nil {
 		return []string{}
@@ -188,7 +188,7 @@ func (s *State) RoundWitnesses(r int) []string {
 	return round.Witnesses()
 }
 
-func (s *State) RoundEvents(r int) int {
+func (s *State) RoundEvents(r int64) int64 {
 	round, err := s.GetRound(r)
 	if err != nil {
 		return 0
@@ -204,7 +204,7 @@ func (s *State) GetRoot(validator string) (*Root, error) {
 	return res, nil
 }
 
-func (s *State) GetBlock(index int) (*types.Block, error) {
+func (s *State) GetBlock(index int64) (*types.Block, error) {
 	res, ok := s.blockCache.Get(index)
 	if !ok {
 		return nil, cm.NewStoreErr("BlockCache", cm.KeyNotFound, strconv.Itoa(index))

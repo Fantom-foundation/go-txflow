@@ -14,7 +14,7 @@ EventCoordinates
 
 type EventCoordinates struct {
 	hash  string
-	index int
+	index int64
 }
 
 type CoordinatesMap map[string]EventCoordinates
@@ -38,16 +38,16 @@ Event
 type Event struct {
 	Transactions types.Txs `json:"transactions"` //the payload
 	Parents      []string  `json:"parents"`      //hashes of the event's parents, self-parent first
-	Index        int       `json:"index"`        //index in the sequence of events created by Creator
+	Index        int64     `json:"index"`        //index in the sequence of events created by Creator
 	Signature    []byte    `json:"signature"`    //creator's digital signature of body
 
-	topologicalIndex int `json:"topological_index"`
+	topologicalIndex int64 `json:"topological_index"`
 
 	//used for sorting
-	round            *int `json:"round"`
-	lamportTimestamp *int `json:"lamport_timestamp"`
+	round            *int64 `json:"round"`
+	lamportTimestamp *int64 `json:"lamport_timestamp"`
 
-	roundReceived *int `json:"round_received"`
+	roundReceived *int64 `json:"round_received"`
 
 	lastAncestors    CoordinatesMap `json:"last_ancestors"`    //[participant pubkey] => last ancestor
 	firstDescendants CoordinatesMap `json:"first_descendants"` //[participant pubkey] => first descendant
@@ -60,7 +60,7 @@ type Event struct {
 func NewEvent(txs types.Txs,
 	parents []string,
 	creator crypto.PubKey,
-	index int) *Event {
+	index int64) *Event {
 	return &Event{
 		Transactions: txs,
 		Parents:      parents,
@@ -115,27 +115,27 @@ func (e *Event) Hex() string {
 	return e.hex
 }
 
-func (e *Event) SetRound(r int) {
+func (e *Event) SetRound(r int64) {
 	if e.round == nil {
-		e.round = new(int)
+		e.round = new(int64)
 	}
 	*e.round = r
 }
 
-func (e *Event) GetRound() *int {
+func (e *Event) GetRound() *int64 {
 	return e.round
 }
 
-func (e *Event) SetLamportTimestamp(t int) {
+func (e *Event) SetLamportTimestamp(t int64) {
 	if e.lamportTimestamp == nil {
-		e.lamportTimestamp = new(int)
+		e.lamportTimestamp = new(int64)
 	}
 	*e.lamportTimestamp = t
 }
 
-func (e *Event) SetRoundReceived(rr int) {
+func (e *Event) SetRoundReceived(rr int64) {
 	if e.roundReceived == nil {
-		e.roundReceived = new(int)
+		e.roundReceived = new(int64)
 	}
 	*e.roundReceived = rr
 }
@@ -160,10 +160,10 @@ func (a ByTopologicalOrder) Less(i, j int) bool {
 // THIS IS A TOTAL ORDER
 type ByLamportTimestamp []*Event
 
-func (a ByLamportTimestamp) Len() int      { return len(a) }
-func (a ByLamportTimestamp) Swap(i, j int) { a[i], a[j] = a[j], a[i] }
-func (a ByLamportTimestamp) Less(i, j int) bool {
-	it, jt := -1, -1
+func (a ByLamportTimestamp) Len() int64      { return int64(len(a)) }
+func (a ByLamportTimestamp) Swap(i, j int64) { a[i], a[j] = a[j], a[i] }
+func (a ByLamportTimestamp) Less(i, j int64) bool {
+	it, jt := int64(-1), int64(-1)
 	if a[i].lamportTimestamp != nil {
 		it = *a[i].lamportTimestamp
 	}
@@ -181,8 +181,8 @@ FrameEvent
 //Round, Witness, and LamportTimestamp.
 type FrameEvent struct {
 	Core             *Event //EventBody + Signature
-	Round            int
-	LamportTimestamp int
+	Round            int64
+	LamportTimestamp int64
 	Witness          bool
 }
 

@@ -5,7 +5,6 @@ import (
 	"math"
 	"reflect"
 	"sort"
-	"strconv"
 
 	"github.com/andrecronje/babble/src/common"
 	"github.com/tendermint/tendermint/libs/log"
@@ -29,38 +28,21 @@ const (
 	COIN_ROUND_FREQ = float64(4)
 )
 
-type Key struct {
-	x, y string
-}
-
-func (k Key) ToString() string {
-	return fmt.Sprintf("{%s, %s}", k.x, k.y)
-}
-
-type TreKey struct {
-	x, y string
-	z    []byte
-}
-
-func (k TreKey) ToString() string {
-	return fmt.Sprintf("{%s, %s, %s}", k.x, k.y, k.z)
-}
-
 //Hashgraph is a DAG of Events. It also contains methods to extract a consensus
 //order of Events and map them onto a blockchain.
 type Hashgraph struct {
 	State                   State                  //store of Events, Rounds, and Blocks
 	UndeterminedEvents      []string               //[index] => hash . FIFO queue of Events whose consensus order is not yet determined
-	PendingRounds           *common.LRU            //FIFO queue of Rounds which have not attained consensus yet
-	LastConsensusRound      *int                   //index of last consensus round
-	FirstConsensusRound     *int                   //index of first consensus round (only used in tests)
-	AnchorBlock             *int                   //index of last block with enough signatures
-	roundLowerBound         *int                   //rounds and events below this lower bound have a special treatement (cf fastsync)
-	LastCommitedRoundEvents int                    //number of events in round before LastConsensusRound
-	ConsensusTransactions   int                    //number of consensus transactions
-	PendingLoadedEvents     int                    //number of loaded events that are not yet committed
+	PendingRounds           *PendingRoundsCache    //FIFO queue of Rounds which have not attained consensus yet
+	LastConsensusRound      *int64                 //index of last consensus round
+	FirstConsensusRound     *int64                 //index of first consensus round (only used in tests)
+	AnchorBlock             *int64                 //index of last block with enough signatures
+	roundLowerBound         *int64                 //rounds and events below this lower bound have a special treatement (cf fastsync)
+	LastCommitedRoundEvents int64                  //number of events in round before LastConsensusRound
+	ConsensusTransactions   int64                  //number of consensus transactions
+	PendingLoadedEvents     int64                  //number of loaded events that are not yet committed
 	commitCallback          InternalCommitCallback //commit block callback
-	topologicalIndex        int                    //counter used to order events in topological order (only local)
+	topologicalIndex        int64                  //counter used to order events in topological order (only local)
 
 	ancestorCache     *common.LRU
 	selfAncestorCache *common.LRU
@@ -78,7 +60,7 @@ func NewHashgraph(state State, commitCallback InternalCommitCallback, logger log
 	cacheSize := state.CacheSize()
 	hashgraph := Hashgraph{
 		State:             state,
-		PendingRounds:     common.NewLRU(cacheSize, nil),
+		PendingRounds:     NewPendingRoundsCache(),
 		commitCallback:    commitCallback,
 		ancestorCache:     common.NewLRU(cacheSize, nil),
 		selfAncestorCache: common.NewLRU(cacheSize, nil),
@@ -221,9 +203,9 @@ func (h *Hashgraph) _stronglySee(x, y string, validators *types.ValidatorSet) (b
 	return c > validators.TotalVotingPower()*2/3, nil
 }
 
-func (h *Hashgraph) round(x string) (int, error) {
+func (h *Hashgraph) round(x string) (int64, error) {
 	if c, ok := h.roundCache.Get(x); ok {
-		return c.(int), nil
+		return c.(int64), nil
 	}
 	r, err := h._round(x)
 	if err != nil {
@@ -233,13 +215,13 @@ func (h *Hashgraph) round(x string) (int, error) {
 	return r, nil
 }
 
-func (h *Hashgraph) _round(x string) (int, error) {
+func (h *Hashgraph) _round(x string) (int64, error) {
 	ex, err := h.State.GetEvent(x)
 	if err != nil {
 		return math.MinInt32, err
 	}
 
-	parentRound := -1
+	parentRound := int64(-1)
 
 	if ex.SelfParent() != "" {
 		parentRound, err = h.round(ex.SelfParent())
@@ -327,7 +309,7 @@ func (h *Hashgraph) _witness(x string) (bool, error) {
 		return false, nil
 	}
 
-	spRound := -1
+	spRound := int64(-1)
 	if ex.SelfParent() != "" {
 		spRound, err = h.round(ex.SelfParent())
 		if err != nil {
@@ -338,13 +320,13 @@ func (h *Hashgraph) _witness(x string) (bool, error) {
 	return xRound > spRound, nil
 }
 
-func (h *Hashgraph) roundReceived(x string) (int, error) {
+func (h *Hashgraph) roundReceived(x string) (int64, error) {
 	ex, err := h.State.GetEvent(x)
 	if err != nil {
 		return -1, err
 	}
 
-	res := -1
+	res := int64(-1)
 	if ex.roundReceived != nil {
 		res = *ex.roundReceived
 	}
@@ -352,9 +334,9 @@ func (h *Hashgraph) roundReceived(x string) (int, error) {
 	return res, nil
 }
 
-func (h *Hashgraph) lamportTimestamp(x string) (int, error) {
+func (h *Hashgraph) lamportTimestamp(x string) (int64, error) {
 	if c, ok := h.timestampCache.Get(x); ok {
-		return c.(int), nil
+		return c.(int64), nil
 	}
 	r, err := h._lamportTimestamp(x)
 	if err != nil {
@@ -364,8 +346,8 @@ func (h *Hashgraph) lamportTimestamp(x string) (int, error) {
 	return r, nil
 }
 
-func (h *Hashgraph) _lamportTimestamp(x string) (int, error) {
-	plt := -1
+func (h *Hashgraph) _lamportTimestamp(x string) (int64, error) {
+	plt := int64(-1)
 
 	ex, err := h.State.GetEvent(x)
 	if err != nil {
@@ -380,7 +362,7 @@ func (h *Hashgraph) _lamportTimestamp(x string) (int, error) {
 	}
 
 	if ex.OtherParent() != "" {
-		opLT := math.MinInt32
+		opLT := int64(math.MinInt64)
 		if _, err := h.State.GetEvent(ex.OtherParent()); err == nil {
 			//if we know the other-parent, fetch its Round directly
 			t, err := h.lamportTimestamp(ex.OtherParent())
@@ -399,7 +381,7 @@ func (h *Hashgraph) _lamportTimestamp(x string) (int, error) {
 }
 
 //round(x) - round(y)
-func (h *Hashgraph) roundDiff(x, y string) (int, error) {
+func (h *Hashgraph) roundDiff(x, y string) (int64, error) {
 	xRound, err := h.round(x)
 	if err != nil {
 		return math.MinInt32, fmt.Errorf("event %s has negative round", x)
@@ -597,52 +579,6 @@ func (h *Hashgraph) createRoot(validator string, head string) (*Root, error) {
 	return root, nil
 }
 
-func (h *Hashgraph) setWireInfo(event *Event) error {
-	selfParentIndex := -1
-	otherParentCreatorID := uint32(0)
-	otherParentIndex := -1
-
-	creator, ok := h.State.RepertoireByPubKey()[event.Creator.Address().String()]
-	if !ok {
-		return fmt.Errorf("Creator %s not found", event.Creator.Address().String()]
-	}
-
-	if event.SelfParent() != "" {
-		selfParent, err := h.State.GetEvent(event.SelfParent())
-		if err != nil {
-			return err
-		}
-		selfParentIndex = selfParent.Index()
-	}
-
-	if event.OtherParent() != "" {
-		otherParent, err := h.Store.GetEvent(event.OtherParent())
-		if err != nil {
-			return err
-		}
-		otherParentCreator, ok := h.Store.RepertoireByPubKey()[otherParent.Creator()]
-		if !ok {
-			return fmt.Errorf("Creator %s not found", otherParent.Creator())
-		}
-		otherParentCreatorID = otherParentCreator.ID()
-		otherParentIndex = otherParent.Index()
-	}
-
-	event.SetWireInfo(selfParentIndex,
-		otherParentCreatorID,
-		otherParentIndex,
-		creator.ID())
-
-	return nil
-}
-
-//Remove processed Signatures from SigPool
-func (h *Hashgraph) removeProcessedSignatures(processedSignatures map[string]bool) {
-	for k := range processedSignatures {
-		h.PendingSignatures.Remove(k)
-	}
-}
-
 /*******************************************************************************
 Public Methods
 *******************************************************************************/
@@ -687,7 +623,7 @@ func (h *Hashgraph) InsertEvent(event *Event, setWireInfo bool) error {
 	if err, warn := h.checkSelfParent(event); err != nil {
 		h.logger.Error("CheckSelfParent",
 			"event", event.Hex(),
-			"creator", event.Creator(),
+			"creator", event.Creator,
 			"self_parent", event.SelfParent(),
 			"err", err,
 		)
@@ -696,7 +632,7 @@ func (h *Hashgraph) InsertEvent(event *Event, setWireInfo bool) error {
 		if warn != nil {
 			h.logger.Info("CheckSelfParent",
 				"event", event.Hex(),
-				"creator", event.Creator(),
+				"creator", event.Creator,
 				"self_parent", event.SelfParent(),
 				"err", err,
 			)
@@ -707,7 +643,7 @@ func (h *Hashgraph) InsertEvent(event *Event, setWireInfo bool) error {
 	if err := h.checkOtherParent(event); err != nil {
 		h.logger.Error("CheckOtherParent",
 			"event", event.Hex(),
-			"creator", event.Creator(),
+			"creator", event.Creator,
 			"other_parent", event.OtherParent(),
 			"err", err,
 		)
@@ -717,17 +653,11 @@ func (h *Hashgraph) InsertEvent(event *Event, setWireInfo bool) error {
 	event.topologicalIndex = h.topologicalIndex
 	h.topologicalIndex++
 
-	if setWireInfo {
-		if err := h.setWireInfo(event); err != nil {
-			return fmt.Errorf("SetWireInfo: %s", err)
-		}
-	}
-
 	if err := h.initEventCoordinates(event); err != nil {
 		return fmt.Errorf("InitEventCoordinates: %s", err)
 	}
 
-	if err := h.Store.SetEvent(event); err != nil {
+	if err := h.State.SetEvent(event); err != nil {
 		return fmt.Errorf("SetEvent: %s", err)
 	}
 
@@ -737,14 +667,7 @@ func (h *Hashgraph) InsertEvent(event *Event, setWireInfo bool) error {
 
 	h.UndeterminedEvents = append(h.UndeterminedEvents, event.Hex())
 
-	if event.IsLoaded() {
-		h.PendingLoadedEvents++
-	}
-
-	for _, bs := range event.BlockSignatures() {
-		h.logger.Debug("Inserting pending signature", bs.Key())
-		h.PendingSignatures.Add(bs)
-	}
+	h.PendingLoadedEvents++
 
 	return nil
 }
@@ -764,7 +687,7 @@ func (h *Hashgraph) InsertFrameEvent(frameEvent *FrameEvent) error {
 	event.SetLamportTimestamp(frameEvent.LamportTimestamp)
 
 	//Create/update RoundInfo object in store
-	roundInfo, err := h.Store.GetRound(frameEvent.Round)
+	roundInfo, err := h.State.GetRound(frameEvent.Round)
 	if err != nil {
 		if !common.Is(err, common.KeyNotFound) {
 			return err
@@ -773,7 +696,7 @@ func (h *Hashgraph) InsertFrameEvent(frameEvent *FrameEvent) error {
 	}
 	roundInfo.AddCreatedEvent(event.Hex(), frameEvent.Witness)
 
-	err = h.Store.SetRound(frameEvent.Round, roundInfo)
+	err = h.State.SetRound(frameEvent.Round, roundInfo)
 	if err != nil {
 		return err
 	}
@@ -783,7 +706,7 @@ func (h *Hashgraph) InsertFrameEvent(frameEvent *FrameEvent) error {
 		return fmt.Errorf("InitEventCoordinates: %s", err)
 	}
 
-	if err := h.Store.SetEvent(event); err != nil {
+	if err := h.State.SetEvent(event); err != nil {
 		return fmt.Errorf("SetEvent: %s", err)
 	}
 
@@ -794,7 +717,7 @@ func (h *Hashgraph) InsertFrameEvent(frameEvent *FrameEvent) error {
 	//All FrameEvents are consensus events, ie. they have a round-received and
 	//were committed. We need to record FrameEvents as consensus events because
 	//it comes into play in GetFrame/CreateRoot
-	if err := h.Store.AddConsensusEvent(event); err != nil {
+	if err := h.State.AddConsensusEvent(event); err != nil {
 		return fmt.Errorf("AddConsensusEvent: %v", event)
 	}
 
@@ -805,7 +728,7 @@ func (h *Hashgraph) InsertFrameEvent(frameEvent *FrameEvent) error {
 //witnesses if necessary. Pushes Rounds in the PendingRounds queue if necessary.
 func (h *Hashgraph) DivideRounds() error {
 	for _, hash := range h.UndeterminedEvents {
-		ev, err := h.Store.GetEvent(hash)
+		ev, err := h.State.GetEvent(hash)
 		if err != nil {
 			return err
 		}
@@ -823,7 +746,7 @@ func (h *Hashgraph) DivideRounds() error {
 			ev.SetRound(roundNumber)
 			updateEvent = true
 
-			roundInfo, err := h.Store.GetRound(roundNumber)
+			roundInfo, err := h.State.GetRound(roundNumber)
 			if err != nil {
 				if !common.Is(err, common.KeyNotFound) {
 					return err
@@ -845,7 +768,7 @@ func (h *Hashgraph) DivideRounds() error {
 
 			roundInfo.AddCreatedEvent(hash, witness)
 
-			err = h.Store.SetRound(roundNumber, roundInfo)
+			err = h.State.SetRound(roundNumber, roundInfo)
 			if err != nil {
 				return err
 			}
@@ -862,7 +785,7 @@ func (h *Hashgraph) DivideRounds() error {
 		}
 
 		if updateEvent {
-			h.Store.SetEvent(ev)
+			h.State.SetEvent(ev)
 		}
 	}
 
@@ -885,12 +808,12 @@ func (h *Hashgraph) DecideFame() error {
 	for _, r := range h.PendingRounds.GetOrderedPendingRounds() {
 		roundIndex := r.Index
 
-		rRoundInfo, err := h.Store.GetRound(roundIndex)
+		rRoundInfo, err := h.State.GetRound(roundIndex)
 		if err != nil {
 			return err
 		}
 
-		rValidatorSet, err := h.Store.GetValidatorSet(roundIndex)
+		rValidatorSet, err := h.State.GetValidatorSet(roundIndex)
 		if err != nil {
 			return err
 		}
@@ -900,13 +823,13 @@ func (h *Hashgraph) DecideFame() error {
 				continue
 			}
 		VOTE_LOOP:
-			for j := roundIndex + 1; j <= h.Store.LastRound(); j++ {
-				jRoundInfo, err := h.Store.GetRound(j)
+			for j := roundIndex + 1; j <= h.State.LastRound(); j++ {
+				jRoundInfo, err := h.State.GetRound(j)
 				if err != nil {
 					return err
 				}
 
-				jValidatorSet, err := h.Store.GetValidatorSet(j)
+				jValidatorSet, err := h.State.GetValidatorSet(j)
 				if err != nil {
 					return err
 				}
@@ -920,12 +843,12 @@ func (h *Hashgraph) DecideFame() error {
 						}
 						setVote(votes, y, x, ycx)
 					} else {
-						jPrevRoundInfo, err := h.Store.GetRound(j - 1)
+						jPrevRoundInfo, err := h.State.GetRound(j - 1)
 						if err != nil {
 							return err
 						}
 
-						jPrevValidatorSet, err := h.Store.GetValidatorSet(j - 1)
+						jPrevValidatorSet, err := h.State.GetValidatorSet(j - 1)
 						if err != nil {
 							return err
 						}
@@ -944,8 +867,8 @@ func (h *Hashgraph) DecideFame() error {
 						}
 
 						//Collect votes from these witnesses.
-						yays := 0
-						nays := 0
+						var yays int64
+						var nays int64
 						for _, w := range ssWitnesses {
 							if votes[w][x] {
 								yays++
@@ -962,7 +885,7 @@ func (h *Hashgraph) DecideFame() error {
 
 						//normal round
 						if math.Mod(float64(diff), COIN_ROUND_FREQ) > 0 {
-							if t >= jValidatorSet.SuperMajority() {
+							if t > jValidatorSet.TotalVotingPower()*2/3 {
 								rRoundInfo.SetFame(x, v)
 								setVote(votes, y, x, v)
 								break VOTE_LOOP //break out of j loop
@@ -970,7 +893,7 @@ func (h *Hashgraph) DecideFame() error {
 								setVote(votes, y, x, v)
 							}
 						} else { //coin round
-							if t >= jValidatorSet.SuperMajority() {
+							if t > jValidatorSet.TotalVotingPower()*2/3 {
 								setVote(votes, y, x, v)
 							} else {
 								setVote(votes, y, x, middleBit(y)) //middle bit of y's hash
@@ -985,7 +908,7 @@ func (h *Hashgraph) DecideFame() error {
 			decidedRounds = append(decidedRounds, roundIndex)
 		}
 
-		err = h.Store.SetRound(roundIndex, rRoundInfo)
+		err = h.State.SetRound(roundIndex, rRoundInfo)
 		if err != nil {
 			return err
 		}
@@ -1013,13 +936,13 @@ func (h *Hashgraph) DecideRoundReceived() error {
 			return err
 		}
 
-		for i := r + 1; i <= h.Store.LastRound(); i++ {
-			tr, err := h.Store.GetRound(i)
+		for i := r + 1; i <= h.State.LastRound(); i++ {
+			tr, err := h.State.GetRound(i)
 			if err != nil {
 				return err
 			}
 
-			tValidators, err := h.Store.GetValidatorSet(i)
+			tValidators, err := h.State.GetValidatorSet(i)
 			if err != nil {
 				return err
 			}
@@ -1054,23 +977,23 @@ func (h *Hashgraph) DecideRoundReceived() error {
 				}
 			}
 
-			if len(s) == len(fws) && len(s) >= tValidators.SuperMajority() {
+			if len(s) == len(fws) && int64(len(s)) > tValidators.TotalVotingPower()*2/3 {
 				received = true
 
-				ex, err := h.Store.GetEvent(x)
+				ex, err := h.State.GetEvent(x)
 				if err != nil {
 					return err
 				}
 
 				ex.SetRoundReceived(i)
 
-				err = h.Store.SetEvent(ex)
+				err = h.State.SetEvent(ex)
 				if err != nil {
 					return err
 				}
 
 				tr.AddReceivedEvent(x)
-				err = h.Store.SetRound(i, tr)
+				err = h.State.SetRound(i, tr)
 				if err != nil {
 					return err
 				}
@@ -1110,7 +1033,7 @@ func (h *Hashgraph) ProcessDecidedRounds() error {
 			break
 		}
 
-		round, err := h.Store.GetRound(r.Index)
+		round, err := h.State.GetRound(r.Index)
 		if err != nil {
 			return err
 		}
@@ -1125,26 +1048,24 @@ func (h *Hashgraph) ProcessDecidedRounds() error {
 			"witnesses", round.FamousWitnesses(),
 			"created_events", len(round.CreatedEvents),
 			"events", len(frame.Events),
-			"validators", len(frame.Validator),
+			"validators", len(frame.Validators),
 			"validator_sets", len(frame.ValidatorSets),
 			"roots", len(frame.Roots),
 		)
 
 		if len(frame.Events) > 0 {
 			for _, e := range frame.Events {
-				err := h.Store.AddConsensusEvent(e.Core)
+				err := h.State.AddConsensusEvent(e.Core)
 				if err != nil {
 					return err
 				}
 
-				h.ConsensusTransactions += len(e.Core.Transactions())
+				h.ConsensusTransactions += len(e.Core.Transactions)
 
-				if e.Core.IsLoaded() {
-					h.PendingLoadedEvents--
-				}
+				h.PendingLoadedEvents--
 			}
 
-			lastBlockIndex := h.Store.LastBlockIndex()
+			lastBlockIndex := h.State.LastBlockIndex()
 			block, err := NewBlockFromFrame(lastBlockIndex+1, frame)
 			if err != nil {
 				return err
@@ -1153,7 +1074,7 @@ func (h *Hashgraph) ProcessDecidedRounds() error {
 			if len(block.Transactions()) > 0 ||
 				len(block.InternalTransactions()) > 0 {
 
-				if err := h.Store.SetBlock(block); err != nil {
+				if err := h.State.SetBlock(block); err != nil {
 					return err
 				}
 
@@ -1179,18 +1100,18 @@ func (h *Hashgraph) ProcessDecidedRounds() error {
 //GetFrame computes the Frame corresponding to a RoundReceived.
 func (h *Hashgraph) GetFrame(roundReceived int) (*Frame, error) {
 	//Try to get it from the Store first
-	frame, err := h.Store.GetFrame(roundReceived)
+	frame, err := h.State.GetFrame(roundReceived)
 	if err == nil || !common.Is(err, common.KeyNotFound) {
 		return frame, err
 	}
 
 	//Get the Round and corresponding consensus Events
-	round, err := h.Store.GetRound(roundReceived)
+	round, err := h.State.GetRound(roundReceived)
 	if err != nil {
 		return nil, err
 	}
 
-	validatorSet, err := h.Store.GetValidatorSet(roundReceived)
+	validatorSet, err := h.State.GetValidatorSet(roundReceived)
 	if err != nil {
 		return nil, err
 	}
@@ -1214,14 +1135,14 @@ func (h *Hashgraph) GetFrame(roundReceived int) (*Frame, error) {
 	roots := make(map[string]*Root)
 
 	for _, ev := range events {
-		p := ev.Core.Creator()
-		r, ok := roots[p]
+		p := ev.Core.Creator
+		r, ok := roots[p.Address().String()]
 		if !ok {
-			r, err = h.createRoot(p, ev.Core.SelfParent())
+			r, err = h.createRoot(p.Address().String(), ev.Core.SelfParent())
 			if err != nil {
 				return nil, err
 			}
-			roots[p] = r
+			roots[p.Address().String()] = r
 		}
 	}
 
@@ -1230,9 +1151,9 @@ func (h *Hashgraph) GetFrame(roundReceived int) (*Frame, error) {
 		the Frame. For the participants that have no Events in this Frame, we
 		create a Root from their last consensus Event, or their last known Root
 	*/
-	for p, peer := range h.Store.RepertoireByPubKey() {
+	for p, validator := range h.State.RepertoireByPubKey() {
 		//Ignore if participant wasn't added before roundReceived
-		firstRound, ok := h.Store.FirstRound(peer.ID())
+		firstRound, ok := h.State.FirstRound(validator.Address.String())
 		if !ok || firstRound > roundReceived {
 			continue
 		}
@@ -1240,7 +1161,7 @@ func (h *Hashgraph) GetFrame(roundReceived int) (*Frame, error) {
 		if _, ok := roots[p]; !ok {
 			var root *Root
 
-			lastConsensusEventHash, err := h.Store.LastConsensusEventFrom(p)
+			lastConsensusEventHash, err := h.State.LastConsensusEventFrom(p)
 			if err != nil {
 				return nil, err
 			}
@@ -1255,163 +1176,24 @@ func (h *Hashgraph) GetFrame(roundReceived int) (*Frame, error) {
 	}
 
 	//Get all ValidatorSets
-	allValidatorSets, err := h.Store.GetAllValidatorSets()
+	allValidatorSets, err := h.State.GetAllValidatorSets()
 	if err != nil {
 		return nil, err
 	}
 
 	res := &Frame{
 		Round:         roundReceived,
-		Validator:     validatorSet.Validators,
+		Validators:    validatorSet.Validators,
 		Roots:         roots,
 		Events:        events,
 		ValidatorSets: allValidatorSets,
 	}
 
-	if err := h.Store.SetFrame(res); err != nil {
+	if err := h.State.SetFrame(res); err != nil {
 		return nil, err
 	}
 
 	return res, nil
-}
-
-/*
-ProcessSigPool runs through the SignaturePool and tries to map a Signature to
-a known Block. If a Signature is valid, it is appended to the block and removed
-from the SignaturePool. The function also updates the AnchorBlock if necessary.
-*/
-func (h *Hashgraph) ProcessSigPool() error {
-	h.logger.Debug("ProcessSigPool()", "pending_signatures", h.PendingSignatures.Len())
-
-	for _, bs := range h.PendingSignatures.Items() {
-		block, err := h.Store.GetBlock(bs.Index)
-		if err != nil {
-			h.logger.Info("Verifying Block signature. Could not fetch Block",
-				"index", bs.Index,
-				"msg", err,
-			)
-			continue
-		}
-
-		validatorSet, err := h.Store.GetValidatorSet(block.RoundReceived())
-		if err != nil {
-			h.logger.Debug("Verifying Block signature. No ValidatorSet for Block's Round ",
-				"index", bs.Index,
-				"round", block.RoundReceived(),
-				"err", err,
-			)
-			continue
-		}
-
-		//check if validator belongs to list of participants
-		if _, ok := validatorSet.ByPubKey[bs.ValidatorHex()]; !ok {
-			h.logger.Debug("Verifying Block signature. Validator does not belong to Block's ValidatorSet",
-				"index", bs.Index,
-				"round", block.RoundReceived(),
-				"validator", bs.ValidatorHex(),
-				"validators", validatorSet.Validators,
-			)
-
-			continue
-		}
-
-		valid, err := block.Verify(bs)
-		if err != nil {
-			h.logger.Error("Verifying Block signature",
-				"index", bs.Index,
-				"msg", err,
-			)
-			return err
-		}
-		if !valid {
-			h.logger.Debug("Verifying Block signature. Invalid signature",
-				"index", bs.Index,
-				"validator", validatorSet.ByPubKey[bs.ValidatorHex()],
-				"block", block,
-			)
-			continue
-		}
-
-		block.SetSignature(bs)
-
-		if err := h.Store.SetBlock(block); err != nil {
-			h.logger.Debug("Saving Block",
-				"index", bs.Index,
-				"msg", err,
-			)
-		}
-
-		if err := h.SetAnchorBlock(block); err != nil {
-			return err
-		}
-
-		h.logger.Debug("processed sig", bs.Key())
-
-		h.PendingSignatures.Remove(bs.Key())
-	}
-
-	return nil
-}
-
-/*
-SetAnchorBlock sets the AnchorBlock index if the proposed block has collected
-enough signatures (+1/3) and is above the current AnchorBlock. The AnchorBlock
-is the latest Block that collected +1/3 signatures from validators. It is used
-in FastForward responses when a node wants to sync to the top of the hashgraph.
-*/
-func (h *Hashgraph) SetAnchorBlock(block *types.Block) error {
-	validatorSet, err := h.Store.GetValidatorSet(block.RoundReceived())
-	if err != nil {
-		h.logger.Error("No ValidatorSet for Block's Round ", "err", err)
-		return err
-	}
-
-	if len(block.Signatures) > validatorSet.TrustCount() &&
-		(h.AnchorBlock == nil ||
-			block.Index() > *h.AnchorBlock) {
-
-		h.setAnchorBlock(block.Index())
-		h.logger.Debug("Setting AnchorBlock",
-			"block_index", block.Index(),
-			"signatures", len(block.Signatures),
-			"trustCount", validatorSet.TrustCount(),
-		)
-	} else {
-		var msg string
-		if h.AnchorBlock != nil {
-			msg = strconv.Itoa(*h.AnchorBlock)
-		} else {
-			msg = "Anchor Block not set"
-		}
-		h.logger.Debug("Block is not a suitable Anchor",
-			"index", block.Index(),
-			"sigs", len(block.Signatures),
-			"trust_count", validatorSet.TrustCount(),
-			"anchor_block", msg,
-		)
-	}
-
-	return nil
-}
-
-//GetAnchorBlockWithFrame returns the AnchorBlock and the corresponding Frame.
-//This can be used as a base to Reset a Hashgraph
-func (h *Hashgraph) GetAnchorBlockWithFrame() (*types.Block, *Frame, error) {
-	if h.AnchorBlock == nil {
-		return nil, nil, fmt.Errorf("No Anchor Block")
-	}
-
-	block, err := h.Store.GetBlock(*h.AnchorBlock)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	frame, err := h.GetFrame(block.RoundReceived())
-	if err != nil {
-		return nil, nil, err
-	}
-
-	return block, frame, nil
 }
 
 //Reset clears the Hashgraph and resets it from a new base.
@@ -1426,7 +1208,7 @@ func (h *Hashgraph) Reset(block *types.Block, frame *Frame) error {
 	h.PendingLoadedEvents = 0
 	h.topologicalIndex = 0
 
-	cacheSize := h.Store.CacheSize()
+	cacheSize := h.State.CacheSize()
 	h.ancestorCache = common.NewLRU(cacheSize, nil)
 	h.selfAncestorCache = common.NewLRU(cacheSize, nil)
 	h.stronglySeeCache = common.NewLRU(cacheSize, nil)
@@ -1434,7 +1216,7 @@ func (h *Hashgraph) Reset(block *types.Block, frame *Frame) error {
 	h.witnessCache = common.NewLRU(cacheSize, nil)
 
 	//Initialize new Roots
-	if err := h.Store.Reset(frame); err != nil {
+	if err := h.State.Reset(frame); err != nil {
 		return err
 	}
 
@@ -1447,11 +1229,11 @@ func (h *Hashgraph) Reset(block *types.Block, frame *Frame) error {
 	}
 
 	//Insert Block
-	if err := h.Store.SetBlock(block); err != nil {
+	if err := h.State.SetBlock(block); err != nil {
 		return err
 	}
-	h.setLastConsensusRound(block.RoundReceived())
-	h.setRoundLowerBound(block.RoundReceived())
+	h.setLastConsensusRound(block.Height)
+	h.setRoundLowerBound(block.Height)
 
 	return nil
 }
@@ -1465,7 +1247,7 @@ and committed to the App layer (via the commit callback), so it is also assumed
 that the application state was reset.
 */
 func (h *Hashgraph) Bootstrap() error {
-	if badgerStore, ok := h.Store.(*BadgerStore); ok {
+	if badgerStore, ok := h.State.(*BadgerStore); ok {
 		//Load Genesis ValidatorSet
 		validatorSet, err := badgerStore.dbGetValidatorSet(0)
 		if err != nil {
@@ -1538,7 +1320,7 @@ func (h *Hashgraph) CheckBlock(block *types.Block, validatorSet *types.Validator
 Setters
 *******************************************************************************/
 
-func (h *Hashgraph) setLastConsensusRound(i int) {
+func (h *Hashgraph) setLastConsensusRound(i int64) {
 	if h.LastConsensusRound == nil {
 		h.LastConsensusRound = new(int)
 	}
@@ -1550,7 +1332,7 @@ func (h *Hashgraph) setLastConsensusRound(i int) {
 	}
 }
 
-func (h *Hashgraph) setRoundLowerBound(i int) {
+func (h *Hashgraph) setRoundLowerBound(i int64) {
 	if h.roundLowerBound == nil {
 		h.roundLowerBound = new(int)
 	}
