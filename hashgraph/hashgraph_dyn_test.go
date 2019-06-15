@@ -7,7 +7,6 @@ import (
 
 	"github.com/andrecronje/babble/src/common"
 	"github.com/andrecronje/babble/src/crypto/keys"
-	"github.com/andrecronje/babble-abci/peers"
 )
 
 /*
@@ -85,9 +84,9 @@ P:[0,1,2]   |  \ |    |
 			0	 1	  2
 */
 func initR2DynHashgraph(t testing.TB) (*Hashgraph, map[string]string) {
-	nodes, index, orderedEvents, peerSet := initHashgraphNodes(3)
+	nodes, index, orderedEvents, validatorSet := initHashgraphNodes(3)
 
-	for i := range peerSet.Peers {
+	for i := range validatorSet.Validators {
 		name := fmt.Sprintf("w0%d", i)
 		event := NewEvent([][]byte{[]byte(name)}, nil, nil, []string{"", ""}, nodes[i].PubBytes, 0)
 		nodes[i].signAndAddEvent(event, name, index, orderedEvents)
@@ -109,22 +108,22 @@ func initR2DynHashgraph(t testing.TB) (*Hashgraph, map[string]string) {
 
 	playEvents(plays, nodes, index, orderedEvents)
 
-	hg := createHashgraph(false, orderedEvents, peerSet, t)
+	hg := createHashgraph(false, orderedEvents, validatorSet, t)
 
 	/***************************************************************************
-		Add Participant 3; new Peerset for Round2
+		Add Participant 3; new Validatorset for Round2
 	***************************************************************************/
 
 	//create new node
 	key3, _ := keys.GenerateECDSAKey()
 	node3 := NewTestNode(key3)
 	nodes = append(nodes, node3)
-	peer3 := peers.NewPeer(node3.PubHex, "", "")
+	validator3 := types.NewValidator(node3.PubHex, "", "")
 	index["R3"] = ""
-	newPeerSet := peerSet.WithNewPeer(peer3)
+	newValidatorSet := validatorSet.WithNewValidator(validator3)
 
-	//Set Round 2 PeerSet
-	err := hg.Store.SetPeerSet(2, newPeerSet)
+	//Set Round 2 ValidatorSet
+	err := hg.Store.SetValidatorSet(2, newValidatorSet)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,13 +154,13 @@ func initR2DynHashgraph(t testing.TB) (*Hashgraph, map[string]string) {
 	}
 
 	/***************************************************************************
-		Remove Participant 0; new Peerset for Round5
+		Remove Participant 0; new Validatorset for Round5
 	***************************************************************************/
 
-	newPeerSet2 := newPeerSet.WithRemovedPeer(newPeerSet.Peers[0])
+	newValidatorSet2 := newValidatorSet.WithRemovedValidator(newValidatorSet.Validators[0])
 
-	//Set Round 5 PeerSet
-	err = hg.Store.SetPeerSet(5, newPeerSet2)
+	//Set Round 5 ValidatorSet
+	err = hg.Store.SetValidatorSet(5, newValidatorSet2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -426,11 +425,11 @@ func TestR2DynProcessDecidedRounds(t *testing.T) {
 		}
 		frameHash, _ := frame.Hash()
 
-		ps, err := h.Store.GetPeerSet(rr)
+		ps, err := h.Store.GetValidatorSet(rr)
 		if err != nil {
 			t.Fatal(err)
 		}
-		peersHash, _ := ps.Hash()
+		validatorsHash, _ := ps.Hash()
 
 		block, err := h.Store.GetBlock(i)
 		if err != nil {
@@ -445,8 +444,8 @@ func TestR2DynProcessDecidedRounds(t *testing.T) {
 			t.Fatalf("Block[%d].FrameHash should be %v, not %v", i, frameHash, bfh)
 		}
 
-		if bph := block.PeersHash(); !reflect.DeepEqual(bph, peersHash) {
-			t.Fatalf("Block[%d].PeersHash should be %v, not %v", i, peersHash, bph)
+		if bph := block.ValidatorsHash(); !reflect.DeepEqual(bph, validatorsHash) {
+			t.Fatalf("Block[%d].ValidatorsHash should be %v, not %v", i, validatorsHash, bph)
 		}
 	}
 }
@@ -503,9 +502,9 @@ Round 0	   e12   |    |
 */
 
 func initUsurperHashgraph(t testing.TB) (*Hashgraph, map[string]string) {
-	nodes, index, orderedEvents, peerSet := initHashgraphNodes(3)
+	nodes, index, orderedEvents, validatorSet := initHashgraphNodes(3)
 
-	for i := range peerSet.Peers {
+	for i := range validatorSet.Validators {
 		name := fmt.Sprintf("w0%d", i)
 		event := NewEvent([][]byte{[]byte(name)}, nil, nil, []string{"", ""}, nodes[i].PubBytes, 0)
 		nodes[i].signAndAddEvent(event, name, index, orderedEvents)
@@ -527,10 +526,10 @@ func initUsurperHashgraph(t testing.TB) (*Hashgraph, map[string]string) {
 
 	playEvents(plays, nodes, index, orderedEvents)
 
-	hg := createHashgraph(false, orderedEvents, peerSet, t)
+	hg := createHashgraph(false, orderedEvents, validatorSet, t)
 
 	/***************************************************************************
-		Add Participant 3 (the usurper); new Peerset for Round10
+		Add Participant 3 (the usurper); new Validatorset for Round10
 		(far enough in the future)
 	***************************************************************************/
 
@@ -538,12 +537,12 @@ func initUsurperHashgraph(t testing.TB) (*Hashgraph, map[string]string) {
 	key3, _ := keys.GenerateECDSAKey()
 	usurperNode := NewTestNode(key3)
 	nodes = append(nodes, usurperNode)
-	usurperPeer := peers.NewPeer(usurperNode.PubHex, "", "")
+	usurperValidator := types.NewValidator(usurperNode.PubHex, "", "")
 	index["R3"] = ""
-	newPeerSet := peerSet.WithNewPeer(usurperPeer)
+	newValidatorSet := validatorSet.WithNewValidator(usurperValidator)
 
-	//Set Round 10 PeerSet
-	err := hg.Store.SetPeerSet(10, newPeerSet)
+	//Set Round 10 ValidatorSet
+	err := hg.Store.SetValidatorSet(10, newValidatorSet)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -667,9 +666,9 @@ func TestUsurperDivideRounds(t *testing.T) {
 	R0
 */
 func initMonologueHashgraph(t testing.TB) (*Hashgraph, map[string]string) {
-	nodes, index, orderedEvents, peerSet := initHashgraphNodes(1)
+	nodes, index, orderedEvents, validatorSet := initHashgraphNodes(1)
 
-	for i := range peerSet.Peers {
+	for i := range validatorSet.Validators {
 		name := fmt.Sprintf("w0%d", i)
 		event := NewEvent([][]byte{[]byte(name)}, nil, nil, []string{"", ""}, nodes[i].PubBytes, 0)
 		nodes[i].signAndAddEvent(event, name, index, orderedEvents)
@@ -688,7 +687,7 @@ func initMonologueHashgraph(t testing.TB) (*Hashgraph, map[string]string) {
 
 	playEvents(plays, nodes, index, orderedEvents)
 
-	hg := createHashgraph(false, orderedEvents, peerSet, t)
+	hg := createHashgraph(false, orderedEvents, validatorSet, t)
 
 	return hg, index
 }
@@ -881,11 +880,11 @@ func TestMonologueDecideRoundReceived(t *testing.T) {
 // 		}
 // 		frameHash, _ := frame.Hash()
 
-// 		ps, err := h.Store.GetPeerSet(rr)
+// 		ps, err := h.Store.GetValidatorSet(rr)
 // 		if err != nil {
 // 			t.Fatal(err)
 // 		}
-// 		peersHash, _ := ps.Hash()
+// 		validatorsHash, _ := ps.Hash()
 
 // 		block, err := h.Store.GetBlock(i)
 // 		if err != nil {
@@ -900,8 +899,8 @@ func TestMonologueDecideRoundReceived(t *testing.T) {
 // 			t.Fatalf("Block[%d].FrameHash should be %v, not %v", i, frameHash, bfh)
 // 		}
 
-// 		if bph := block.PeersHash(); !reflect.DeepEqual(bph, peersHash) {
-// 			t.Fatalf("Block[%d].PeersHash should be %v, not %v", i, peersHash, bph)
+// 		if bph := block.ValidatorsHash(); !reflect.DeepEqual(bph, validatorsHash) {
+// 			t.Fatalf("Block[%d].ValidatorsHash should be %v, not %v", i, validatorsHash, bph)
 // 		}
 // 	}
 // }

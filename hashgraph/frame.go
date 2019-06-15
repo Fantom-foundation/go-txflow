@@ -1,20 +1,17 @@
 package hashgraph
 
 import (
-	"bytes"
 	"sort"
 
-	"github.com/andrecronje/babble/src/crypto"
-	"github.com/andrecronje/babble-abci/peers"
-	"github.com/ugorji/go/codec"
+	"github.com/tendermint/tendermint/types"
 )
 
 type Frame struct {
-	Round    int //RoundReceived
-	Peers    []*peers.Peer
-	Roots    map[string]*Root
-	Events   []*FrameEvent         //Events with RoundReceived = Round
-	PeerSets map[int][]*peers.Peer //[round] => Peers
+	Round         int //RoundReceived
+	Validators    []*types.Validator
+	Roots         map[string]*Root
+	Events        []*FrameEvent              //Events with RoundReceived = Round
+	ValidatorSets map[int][]*types.Validator //[round] => Peers
 }
 
 func (f *Frame) SortedFrameEvents() []*FrameEvent {
@@ -25,39 +22,4 @@ func (f *Frame) SortedFrameEvents() []*FrameEvent {
 	sorted = append(sorted, f.Events...)
 	sort.Sort(sorted)
 	return sorted
-}
-
-//json encoding of Frame
-func (f *Frame) Marshal() ([]byte, error) {
-	b := new(bytes.Buffer)
-	jh := new(codec.JsonHandle)
-	jh.Canonical = true
-	enc := codec.NewEncoder(b, jh)
-
-	if err := enc.Encode(f); err != nil {
-		return nil, err
-	}
-
-	return b.Bytes(), nil
-}
-
-func (f *Frame) Unmarshal(data []byte) error {
-	b := bytes.NewBuffer(data)
-	jh := new(codec.JsonHandle)
-	jh.Canonical = true
-	dec := codec.NewDecoder(b, jh)
-
-	if err := dec.Decode(f); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (f *Frame) Hash() ([]byte, error) {
-	hashBytes, err := f.Marshal()
-	if err != nil {
-		return nil, err
-	}
-	return crypto.SHA256(hashBytes), nil
 }

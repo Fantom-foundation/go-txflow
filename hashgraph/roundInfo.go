@@ -4,7 +4,7 @@ import (
 	"bytes"
 
 	"github.com/andrecronje/babble/src/common"
-	"github.com/andrecronje/babble-abci/peers"
+	"github.com/tendermint/tendermint/types"
 	"github.com/ugorji/go/codec"
 )
 
@@ -69,7 +69,7 @@ witness that is not yet known when a super-majority of witnesses are already
 decided, has no chance of ever being famous. Once a Round is decided it stays
 decided, even if new witnesses are added after it was first decided.
 */
-func (r *RoundInfo) WitnessesDecided(peerSet *peers.PeerSet) bool {
+func (r *RoundInfo) WitnessesDecided(validatorSet *types.ValidatorSet) bool {
 	//if the round was already decided, it stays decided no matter what.
 	if r.decided {
 		return true
@@ -84,7 +84,7 @@ func (r *RoundInfo) WitnessesDecided(peerSet *peers.PeerSet) bool {
 		}
 	}
 
-	r.decided = c >= peerSet.SuperMajority()
+	r.decided = c >= validatorSet.SuperMajority()
 
 	return r.decided
 }

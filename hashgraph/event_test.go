@@ -7,7 +7,7 @@ import (
 	"github.com/andrecronje/babble/src/crypto/keys"
 )
 
-func createDummyEventBody() EventBody {
+/*func createDummyEventBody() EventBody {
 	body := EventBody{}
 	body.Transactions = [][]byte{[]byte("abc"), []byte("def")}
 	body.InternalTransactions = []InternalTransaction{}
@@ -21,7 +21,7 @@ func createDummyEventBody() EventBody {
 		},
 	}
 	return body
-}
+}*/
 
 func TestMarshallBody(t *testing.T) {
 	body := createDummyEventBody()

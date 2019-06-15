@@ -10,7 +10,6 @@ import (
 	"github.com/andrecronje/babble-abci/hashgraph"
 	"github.com/andrecronje/babble-abci/peers"
 	"github.com/andrecronje/babble/src/common"
-	b "github.com/andrecronje/babble/src/node"
 	"github.com/tendermint/tendermint/libs/log"
 	"github.com/tendermint/tendermint/proxy"
 )
@@ -19,7 +18,7 @@ import (
 type Core struct {
 
 	// validator is a wrapper around the private-key controlling this node.
-	validator *b.Validator
+	validator *Validator
 
 	// hg is the underlying hashgraph where all the consensus computation and
 	// data reside.
@@ -91,7 +90,7 @@ type Core struct {
 
 // NewCore is a factory method that returns a new Core object
 func NewCore(
-	validator *b.Validator,
+	validator *Validator,
 	peers *peers.PeerSet,
 	genesisPeers *peers.PeerSet,
 	store hashgraph.Store,

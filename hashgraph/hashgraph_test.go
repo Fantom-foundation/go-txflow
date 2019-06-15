@@ -11,8 +11,8 @@ import (
 
 	"github.com/andrecronje/babble/src/common"
 	bkeys "github.com/andrecronje/babble/src/crypto/keys"
-	"github.com/andrecronje/babble-abci/peers"
 	"github.com/tendermint/tendermint/libs/log"
+	"github.com/tendermint/tendermint/types"
 )
 
 var (
@@ -69,7 +69,7 @@ type play struct {
 	otherParent string
 	name        string
 	txPayload   [][]byte
-	sigPayload  []BlockSignature
+	//sigPayload  []BlockSignature
 }
 
 func testLogger(t testing.TB) log.Logger {
@@ -78,25 +78,25 @@ func testLogger(t testing.TB) log.Logger {
 
 /* Initialisation functions */
 
-func initHashgraphNodes(n int) ([]TestNode, map[string]string, *[]*Event, *peers.PeerSet) {
+func initHashgraphNodes(n int) ([]TestNode, map[string]string, *[]*Event, *types.ValidatorSet) {
 	index := make(map[string]string)
 	nodes := []TestNode{}
 	orderedEvents := &[]*Event{}
 	keys := map[string]*ecdsa.PrivateKey{}
-	pirs := []*peers.Peer{}
+	pirs := []*types.Validator{}
 
 	for i := 0; i < n; i++ {
 		key, _ := bkeys.GenerateECDSAKey()
 		pubHex := bkeys.PublicKeyHex(&key.PublicKey)
-		p := peers.NewPeer(pubHex, "", "")
+		p := types.NewValidator(pubHex, "", "")
 		pirs = append(pirs, p)
 		keys[pubHex] = key
 		nodes = append(nodes, NewTestNode(key))
 	}
 
-	peerSet := peers.NewPeerSet(pirs)
+	validatorSet := types.NewValidatorSet(pirs)
 
-	return nodes, index, orderedEvents, peerSet
+	return nodes, index, orderedEvents, validatorSet
 }
 
 func playEvents(plays []play, nodes []TestNode, index map[string]string, orderedEvents *[]*Event) {
@@ -111,7 +111,7 @@ func playEvents(plays []play, nodes []TestNode, index map[string]string, ordered
 	}
 }
 
-func createHashgraph(db bool, orderedEvents *[]*Event, peerSet *peers.PeerSet, t testing.TB) *Hashgraph {
+func createHashgraph(db bool, orderedEvents *[]*Event, validatorSet *types.ValidatorSet, t testing.TB) *Hashgraph {
 	var store Store
 	if db {
 		var err error
@@ -125,7 +125,7 @@ func createHashgraph(db bool, orderedEvents *[]*Event, peerSet *peers.PeerSet, t
 
 	hashgraph := NewHashgraph(store, DummyInternalCommitCallback, testLogger(t))
 
-	if err := hashgraph.Init(peerSet); err != nil {
+	if err := hashgraph.Init(validatorSet); err != nil {
 		t.Fatalf("ERROR initializing Hashgraph: %s\n", err)
 	}
 
@@ -139,11 +139,11 @@ func createHashgraph(db bool, orderedEvents *[]*Event, peerSet *peers.PeerSet, t
 }
 
 func initHashgraphFull(plays []play, db bool, n int, t testing.TB) (*Hashgraph, map[string]string, *[]*Event) {
-	nodes, index, orderedEvents, peerSet := initHashgraphNodes(n)
+	nodes, index, orderedEvents, validatorSet := initHashgraphNodes(n)
 
 	playEvents(plays, nodes, index, orderedEvents)
 
-	hashgraph := createHashgraph(db, orderedEvents, peerSet, t)
+	hashgraph := createHashgraph(db, orderedEvents, validatorSet, t)
 
 	return hashgraph, index, orderedEvents
 }
@@ -332,20 +332,20 @@ and yet they are both ancestors of event e20
 func TestFork(t *testing.T) {
 	index := make(map[string]string)
 	nodes := []TestNode{}
-	pirs := []*peers.Peer{}
+	pirs := []*types.Validator{}
 
 	for i := 0; i < n; i++ {
 		key, _ := bkeys.GenerateECDSAKey()
 		node := NewTestNode(key)
 		nodes = append(nodes, node)
-		pirs = append(pirs, peers.NewPeer(node.PubHex, "", ""))
+		pirs = append(pirs, types.NewValidator(node.PubHex, "", ""))
 	}
 
-	peerSet := peers.NewPeerSet(pirs)
+	validatorSet := types.NewValidatorSet(pirs)
 
 	hashgraph := NewHashgraph(NewInmemStore(cacheSize), DummyInternalCommitCallback, testLogger(t))
 
-	hashgraph.Init(peerSet)
+	hashgraph.Init(validatorSet)
 
 	for i, node := range nodes {
 		event := NewEvent(nil, nil, nil, []string{"", ""}, node.PubBytes, 0)
@@ -436,7 +436,7 @@ func TestInsertEvent(t *testing.T) {
 
 	t.Run("Check Event Coordinates", func(t *testing.T) {
 
-		peerSet, err := h.Store.GetPeerSet(0)
+		validatorSet, err := h.Store.GetValidatorSet(0)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -450,18 +450,18 @@ func TestInsertEvent(t *testing.T) {
 		if !(e0.Body.selfParentIndex == -1 &&
 			e0.Body.otherParentCreatorID == 0 &&
 			e0.Body.otherParentIndex == -1 &&
-			e0.Body.creatorID == peerSet.ByPubKey[e0.Creator()].ID()) {
+			e0.Body.creatorID == validatorSet.ByPubKey[e0.Creator()].ID()) {
 			t.Fatalf("Invalid wire info on e0")
 		}
 
 		expectedFirstDescendants := CoordinatesMap{
-			peerSet.PubKeys()[0]: EventCoordinates{index["e0"], 0},
-			peerSet.PubKeys()[1]: EventCoordinates{index["e10"], 1},
-			peerSet.PubKeys()[2]: EventCoordinates{index["e21"], 2},
+			validatorSet.PubKeys()[0]: EventCoordinates{index["e0"], 0},
+			validatorSet.PubKeys()[1]: EventCoordinates{index["e10"], 1},
+			validatorSet.PubKeys()[2]: EventCoordinates{index["e21"], 2},
 		}
 
 		expectedLastAncestors := CoordinatesMap{
-			peerSet.PubKeys()[0]: EventCoordinates{index["e0"], 0},
+			validatorSet.PubKeys()[0]: EventCoordinates{index["e0"], 0},
 		}
 
 		if !reflect.DeepEqual(e0.firstDescendants, expectedFirstDescendants) {
@@ -485,22 +485,22 @@ func TestInsertEvent(t *testing.T) {
 		}
 
 		if !(e21.Body.selfParentIndex == 1 &&
-			e21.Body.otherParentCreatorID == peerSet.ByPubKey[e10.Creator()].ID() &&
+			e21.Body.otherParentCreatorID == validatorSet.ByPubKey[e10.Creator()].ID() &&
 			e21.Body.otherParentIndex == 1 &&
-			e21.Body.creatorID == peerSet.ByPubKey[e21.Creator()].ID()) {
+			e21.Body.creatorID == validatorSet.ByPubKey[e21.Creator()].ID()) {
 			t.Fatalf("Invalid wire info on e21")
 		}
 
 		expectedFirstDescendants = CoordinatesMap{
-			peerSet.PubKeys()[0]: EventCoordinates{index["e02"], 2},
-			peerSet.PubKeys()[1]: EventCoordinates{index["f1"], 3},
-			peerSet.PubKeys()[2]: EventCoordinates{index["e21"], 2},
+			validatorSet.PubKeys()[0]: EventCoordinates{index["e02"], 2},
+			validatorSet.PubKeys()[1]: EventCoordinates{index["f1"], 3},
+			validatorSet.PubKeys()[2]: EventCoordinates{index["e21"], 2},
 		}
 
 		expectedLastAncestors = CoordinatesMap{
-			peerSet.PubKeys()[0]: EventCoordinates{index["e0"], 0},
-			peerSet.PubKeys()[1]: EventCoordinates{index["e10"], 1},
-			peerSet.PubKeys()[2]: EventCoordinates{index["e21"], 2},
+			validatorSet.PubKeys()[0]: EventCoordinates{index["e0"], 0},
+			validatorSet.PubKeys()[1]: EventCoordinates{index["e10"], 1},
+			validatorSet.PubKeys()[2]: EventCoordinates{index["e21"], 2},
 		}
 
 		if !reflect.DeepEqual(e21.firstDescendants, expectedFirstDescendants) {
@@ -517,20 +517,20 @@ func TestInsertEvent(t *testing.T) {
 		}
 
 		if !(f1.Body.selfParentIndex == 2 &&
-			f1.Body.otherParentCreatorID == peerSet.ByPubKey[e0.Creator()].ID() &&
+			f1.Body.otherParentCreatorID == validatorSet.ByPubKey[e0.Creator()].ID() &&
 			f1.Body.otherParentIndex == 2 &&
-			f1.Body.creatorID == peerSet.ByPubKey[f1.Creator()].ID()) {
+			f1.Body.creatorID == validatorSet.ByPubKey[f1.Creator()].ID()) {
 			t.Fatalf("Invalid wire info on f1")
 		}
 
 		expectedFirstDescendants = CoordinatesMap{
-			peerSet.PubKeys()[1]: EventCoordinates{index["f1"], 3},
+			validatorSet.PubKeys()[1]: EventCoordinates{index["f1"], 3},
 		}
 
 		expectedLastAncestors = CoordinatesMap{
-			peerSet.PubKeys()[0]: EventCoordinates{index["e02"], 2},
-			peerSet.PubKeys()[1]: EventCoordinates{index["f1"], 3},
-			peerSet.PubKeys()[2]: EventCoordinates{index["e21"], 2},
+			validatorSet.PubKeys()[0]: EventCoordinates{index["e02"], 2},
+			validatorSet.PubKeys()[1]: EventCoordinates{index["f1"], 3},
+			validatorSet.PubKeys()[2]: EventCoordinates{index["e21"], 2},
 		}
 
 		if !reflect.DeepEqual(f1.firstDescendants, expectedFirstDescendants) {
@@ -630,13 +630,13 @@ func TestStronglySee(t *testing.T) {
 		ancestryItem{"s11", "", false, true},
 	}
 
-	peerSet, err := h.Store.GetPeerSet(0)
+	validatorSet, err := h.Store.GetValidatorSet(0)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	for _, exp := range expected {
-		a, err := h.stronglySee(index[exp.descendant], index[exp.ancestor], peerSet)
+		a, err := h.stronglySee(index[exp.descendant], index[exp.ancestor], validatorSet)
 		if err != nil && !exp.err {
 			t.Fatalf("Error computing stronglySee(%s, %s). Err: %v", exp.descendant, exp.ancestor, err)
 		}
@@ -874,25 +874,25 @@ e0  e1  e2    Block (0, 1)
 0   1    2
 */
 func initBlockHashgraph(t *testing.T) (*Hashgraph, []TestNode, map[string]string) {
-	nodes, index, orderedEvents, peerSet := initHashgraphNodes(n)
+	nodes, index, orderedEvents, validatorSet := initHashgraphNodes(n)
 
-	for i := range peerSet.Peers {
+	for i := range validatorSet.Validators {
 		event := NewEvent(nil, nil, nil, []string{"", ""}, nodes[i].PubBytes, 0)
 		nodes[i].signAndAddEvent(event, fmt.Sprintf("e%d", i), index, orderedEvents)
 	}
 
 	hashgraph := NewHashgraph(NewInmemStore(cacheSize), DummyInternalCommitCallback, testLogger(t))
 
-	hashgraph.Init(peerSet)
+	hashgraph.Init(validatorSet)
 
 	//create a block and signatures manually
 	block := NewBlock(0, 1,
 		[]byte("framehash"),
-		peerSet.Peers,
+		validatorSet.Validators,
 		[][]byte{[]byte("block tx")},
 		[]InternalTransaction{
-			NewInternalTransaction(PEER_ADD, *peers.NewPeer("peer1", "paris", "peer1")),
-			NewInternalTransaction(PEER_REMOVE, *peers.NewPeer("peer2", "london", "peer2")),
+			NewInternalTransaction(PEER_ADD, *types.NewValidator("validator1", "paris", "validator1")),
+			NewInternalTransaction(PEER_REMOVE, *types.NewValidator("validator2", "london", "validator2")),
 		})
 
 	err := hashgraph.Store.SetBlock(block)
@@ -978,11 +978,11 @@ func TestInsertEventsWithBlockSignatures(t *testing.T) {
 	t.Run("Inserting Events with signature of unknown block", func(t *testing.T) {
 		//The Event should be inserted
 		//The block signature is simply ignored
-		peerSet, err := h.Store.GetPeerSet(2)
+		validatorSet, err := h.Store.GetValidatorSet(2)
 		if err != nil {
 			t.Fatal(err)
 		}
-		block1 := NewBlock(1, 2, []byte("framehash"), peerSet.Peers, [][]byte{}, []InternalTransaction{})
+		block1 := NewBlock(1, 2, []byte("framehash"), validatorSet.Validators, [][]byte{}, []InternalTransaction{})
 		sig, _ := block1.Sign(nodes[2].Key)
 
 		//unknown block
@@ -1539,16 +1539,16 @@ func BenchmarkConsensus(b *testing.B) {
 func TestKnown(t *testing.T) {
 	h, _ := initConsensusHashgraph(false, t)
 
-	peerSet, _ := h.Store.GetPeerSet(0)
+	validatorSet, _ := h.Store.GetValidatorSet(0)
 
 	expectedKnown := map[uint32]int{
-		peerSet.IDs()[0]: 10,
-		peerSet.IDs()[1]: 9,
-		peerSet.IDs()[2]: 9,
+		validatorSet.IDs()[0]: 10,
+		validatorSet.IDs()[1]: 9,
+		validatorSet.IDs()[2]: 9,
 	}
 
 	known := h.Store.KnownEvents()
-	for _, id := range peerSet.IDs() {
+	for _, id := range validatorSet.IDs() {
 		if l := known[id]; l != expectedKnown[id] {
 			t.Fatalf("Known[%d] should be %d, not %d", id, expectedKnown[id], l)
 		}
@@ -1558,7 +1558,7 @@ func TestKnown(t *testing.T) {
 func TestGetFrame(t *testing.T) {
 	h, index := initConsensusHashgraph(false, t)
 
-	peerSet, _ := h.Store.GetPeerSet(0)
+	validatorSet, _ := h.Store.GetValidatorSet(0)
 
 	h.DivideRounds()
 	h.DecideFame()
@@ -1568,9 +1568,9 @@ func TestGetFrame(t *testing.T) {
 	t.Run("Round 1", func(t *testing.T) {
 		expectedRoots := make(map[string]*Root, n)
 
-		expectedRoots[peerSet.PubKeys()[0]] = NewRoot()
-		expectedRoots[peerSet.PubKeys()[1]] = NewRoot()
-		expectedRoots[peerSet.PubKeys()[2]] = NewRoot()
+		expectedRoots[validatorSet.PubKeys()[0]] = NewRoot()
+		expectedRoots[validatorSet.PubKeys()[1]] = NewRoot()
+		expectedRoots[validatorSet.PubKeys()[2]] = NewRoot()
 
 		frame, err := h.GetFrame(1)
 		if err != nil {
@@ -1639,7 +1639,7 @@ func TestGetFrame(t *testing.T) {
 				}
 				root.Insert(re)
 			}
-			expectedRoots[peerSet.Peers[i].PubKeyString()] = root
+			expectedRoots[validatorSet.Validators[i].PubKeyString()] = root
 		}
 
 		frame, err := h.GetFrame(2)
@@ -1685,7 +1685,7 @@ func TestGetFrame(t *testing.T) {
 func TestResetFromFrame(t *testing.T) {
 	h, index := initConsensusHashgraph(false, t)
 
-	peerSet, _ := h.Store.GetPeerSet(0)
+	validatorSet, _ := h.Store.GetValidatorSet(0)
 
 	h.DivideRounds()
 	h.DecideFame()
@@ -1741,15 +1741,15 @@ func TestResetFromFrame(t *testing.T) {
 
 	//Test Known
 	expectedKnown := map[uint32]int{
-		peerSet.IDs()[0]: 5,
-		peerSet.IDs()[1]: 4,
-		peerSet.IDs()[2]: 4,
+		validatorSet.IDs()[0]: 5,
+		validatorSet.IDs()[1]: 4,
+		validatorSet.IDs()[2]: 4,
 	}
 
 	known := h2.Store.KnownEvents()
-	for _, peer := range peerSet.ByID {
-		if l := known[peer.ID()]; l != expectedKnown[peer.ID()] {
-			t.Fatalf("Known[%d] should be %d, not %d", peer.ID(), expectedKnown[peer.ID()], l)
+	for _, validator := range validatorSet.ByID {
+		if l := known[validator.ID()]; l != expectedKnown[validator.ID()] {
+			t.Fatalf("Known[%d] should be %d, not %d", validator.ID(), expectedKnown[validator.ID()], l)
 		}
 	}
 
@@ -1768,7 +1768,7 @@ func TestResetFromFrame(t *testing.T) {
 	}
 
 	for _, exp := range expected {
-		a, err := h2.stronglySee(index[exp.descendant], index[exp.ancestor], peerSet)
+		a, err := h2.stronglySee(index[exp.descendant], index[exp.ancestor], validatorSet)
 		if err != nil && !exp.err {
 			t.Fatalf("Error computing stronglySee(%s, %s). Err: %v", exp.descendant, exp.ancestor, err)
 		}
@@ -2028,7 +2028,7 @@ func TestBootstrap(t *testing.T) {
 func initFunkyHashgraph(full bool, t testing.TB) (*Hashgraph, map[string]string) {
 	nodes, index, orderedEvents, participants := initHashgraphNodes(4)
 
-	for i := range participants.Peers {
+	for i := range participants.Validators {
 		name := fmt.Sprintf("w0%d", i)
 		event := NewEvent([][]byte{[]byte(name)}, nil, nil, []string{"", ""}, nodes[i].PubBytes, 0)
 		nodes[i].signAndAddEvent(event, name, index, orderedEvents)
@@ -2361,7 +2361,7 @@ ATTENTION: Look at roots in Rounds 1 and 2
 func initSparseHashgraph(t testing.TB) (*Hashgraph, map[string]string) {
 	nodes, index, orderedEvents, participants := initHashgraphNodes(4)
 
-	for i := range participants.Peers {
+	for i := range participants.Validators {
 		name := fmt.Sprintf("w0%d", i)
 		event := NewEvent([][]byte{[]byte(name)}, nil, nil, []string{"", ""}, nodes[i].PubBytes, 0)
 		nodes[i].signAndAddEvent(event, name, index, orderedEvents)
@@ -2519,10 +2519,10 @@ func compareRoundWitnesses(h, h2 *Hashgraph, index map[string]string, round int,
 }
 
 func getDiff(h *Hashgraph, known map[uint32]int, t *testing.T) []*Event {
-	peerSet, _ := h.Store.GetPeerSet(0)
+	validatorSet, _ := h.Store.GetValidatorSet(0)
 	diff := []*Event{}
 	for id, ct := range known {
-		pk := peerSet.ByID[id].PubKeyString()
+		pk := validatorSet.ByID[id].PubKeyString()
 		//get participant Events with index > ct
 		participantEvents, err := h.Store.ParticipantEvents(pk, ct)
 		if err != nil {
