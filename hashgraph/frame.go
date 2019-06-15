@@ -7,7 +7,7 @@ import (
 )
 
 type Frame struct {
-	Round         int //RoundReceived
+	Round         int64 //RoundReceived
 	Validators    []*types.Validator
 	Roots         map[string]*Root
 	Events        []*FrameEvent              //Events with RoundReceived = Round

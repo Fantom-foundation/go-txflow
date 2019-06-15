@@ -75,7 +75,7 @@ func (r *RoundInfo) WitnessesDecided(validatorSet *types.ValidatorSet) bool {
 		return true
 	}
 
-	c := 0
+	c := int64(0)
 	for _, e := range r.CreatedEvents {
 		if e.Witness && e.Famous != common.Undefined {
 			c++
@@ -84,7 +84,7 @@ func (r *RoundInfo) WitnessesDecided(validatorSet *types.ValidatorSet) bool {
 		}
 	}
 
-	r.decided = c >= validatorSet.SuperMajority()
+	r.decided = c > validatorSet.TotalVotingPower()*2/3
 
 	return r.decided
 }

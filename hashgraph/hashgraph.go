@@ -3,7 +3,6 @@ package hashgraph
 import (
 	"fmt"
 	"math"
-	"reflect"
 	"sort"
 
 	"github.com/andrecronje/babble/src/common"
@@ -803,7 +802,7 @@ func (h *Hashgraph) DecideFame() error {
 		votes[x][y] = vote
 	}
 
-	decidedRounds := []int{}
+	decidedRounds := []int64{}
 
 	for _, r := range h.PendingRounds.GetOrderedPendingRounds() {
 		roundIndex := r.Index
@@ -1020,7 +1019,7 @@ commit channel
 */
 func (h *Hashgraph) ProcessDecidedRounds() error {
 	//Defer removing processed Rounds from the PendingRounds Queue
-	processedRounds := []int{}
+	processedRounds := []int64{}
 	defer func() {
 		h.PendingRounds.Clean(processedRounds)
 	}()
@@ -1060,7 +1059,7 @@ func (h *Hashgraph) ProcessDecidedRounds() error {
 					return err
 				}
 
-				h.ConsensusTransactions += len(e.Core.Transactions)
+				h.ConsensusTransactions += int64(len(e.Core.Transactions))
 
 				h.PendingLoadedEvents--
 			}
@@ -1098,7 +1097,7 @@ func (h *Hashgraph) ProcessDecidedRounds() error {
 }
 
 //GetFrame computes the Frame corresponding to a RoundReceived.
-func (h *Hashgraph) GetFrame(roundReceived int) (*Frame, error) {
+func (h *Hashgraph) GetFrame(roundReceived int64) (*Frame, error) {
 	//Try to get it from the Store first
 	frame, err := h.State.GetFrame(roundReceived)
 	if err == nil || !common.Is(err, common.KeyNotFound) {
@@ -1238,112 +1237,27 @@ func (h *Hashgraph) Reset(block *types.Block, frame *Frame) error {
 	return nil
 }
 
-/*
-Bootstrap loads all Events from the Store's DB (if there is one) and feeds
-them to the Hashgraph consensus methods in topological order. It is assumed that
-no events are skipped/lost when loading from the database - WE CAN ONLY
-BOOTSTRAP FROM 0. As Events are inserted and processed, Blocks will be created
-and committed to the App layer (via the commit callback), so it is also assumed
-that the application state was reset.
-*/
-func (h *Hashgraph) Bootstrap() error {
-	if badgerStore, ok := h.State.(*BadgerStore); ok {
-		//Load Genesis ValidatorSet
-		validatorSet, err := badgerStore.dbGetValidatorSet(0)
-		if err != nil {
-			return fmt.Errorf("No Genesis PeerSet: %v", err)
-		}
-
-		//Initialize the InmemStore with Genesis ValidatorSet. This has side-effects:
-		//It will create the corresponding Roots and populate the Repertoires.
-		badgerStore.inmemStore.SetValidatorSet(0, validatorSet)
-
-		//Retreive the Events from the underlying DB. They come out in topological
-		//order
-		topologicalEvents, err := badgerStore.dbTopologicalEvents()
-		if err != nil {
-			return err
-		}
-
-		//Insert the Events in the Hashgraph
-		for _, e := range topologicalEvents {
-			if err := h.InsertEventAndRunConsensus(e, true); err != nil {
-				return err
-			}
-		}
-
-		//ProcessSigPool
-		if err := h.ProcessSigPool(); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-//CheckBlock returns an error if the Block does not contain valid signatures
-//from MORE than 1/3 of participants
-func (h *Hashgraph) CheckBlock(block *types.Block, validatorSet *types.ValidatorSet) error {
-	psh, err := validatorSet.Hash()
-	if err != nil {
-		return err
-	}
-
-	if !reflect.DeepEqual(psh, block.ValidatorsHash()) {
-		return fmt.Errorf("Wrong ValidatorSet")
-	}
-
-	validSignatures := 0
-	for _, s := range block.GetSignatures() {
-		validatorHex := s.ValidatorHex()
-		if _, ok := validatorSet.ByPubKey[validatorHex]; !ok {
-			h.logger.Debug("Verifying Block signature. Unknown validator",
-				"validator", validatorHex,
-			)
-			continue
-		}
-		ok, _ := block.Verify(s)
-		if ok {
-			validSignatures++
-		}
-	}
-
-	if validSignatures <= validatorSet.TrustCount() {
-		return fmt.Errorf("Not enough valid signatures: got %d, need %d", validSignatures, validatorSet.TrustCount())
-	}
-
-	h.logger.Debug("CheckBlock", "valid_signatures", validSignatures)
-	return nil
-}
-
 /*******************************************************************************
 Setters
 *******************************************************************************/
 
 func (h *Hashgraph) setLastConsensusRound(i int64) {
 	if h.LastConsensusRound == nil {
-		h.LastConsensusRound = new(int)
+		h.LastConsensusRound = new(int64)
 	}
 	*h.LastConsensusRound = i
 
 	if h.FirstConsensusRound == nil {
-		h.FirstConsensusRound = new(int)
+		h.FirstConsensusRound = new(int64)
 		*h.FirstConsensusRound = i
 	}
 }
 
 func (h *Hashgraph) setRoundLowerBound(i int64) {
 	if h.roundLowerBound == nil {
-		h.roundLowerBound = new(int)
+		h.roundLowerBound = new(int64)
 	}
 	*h.roundLowerBound = i
-}
-
-func (h *Hashgraph) setAnchorBlock(i int) {
-	if h.AnchorBlock == nil {
-		h.AnchorBlock = new(int)
-	}
-	*h.AnchorBlock = i
 }
 
 /*******************************************************************************

@@ -8,19 +8,19 @@ import (
 )
 
 type State struct {
-	cacheSize            int
+	cacheSize            int64
 	eventCache           *cm.LRU          //hash => Event
 	roundCache           *cm.LRU          //round number => Round
 	blockCache           *cm.LRU          //index => Block
 	frameCache           *cm.LRU          //round received => Frame
 	consensusCache       *cm.RollingIndex //consensus index => hash
-	totConsensusEvents   int
-	validatorSetCache    *cm.LRU          //start round => PeerSet
-	validatorEventsCache *cm.LRU          //pubkey => Events
-	roots                map[string]*Root //[participant] => Root
-	lastRound            int
+	totConsensusEvents   int64
+	validatorSetCache    *ValidatorSetCache    //start round => PeerSet
+	validatorEventsCache *ValidatorEventsCache //pubkey => Events
+	roots                map[string]*Root      //[participant] => Root
+	lastRound            int64
 	lastConsensusEvents  map[string]string //[participant] => hex() of last consensus event
-	lastBlock            int
+	lastBlock            int64
 }
 
 func NewState(cacheSize int) *State {
@@ -82,7 +82,7 @@ func (s *State) GetAllValidatorSets() (map[int][]*types.Validator, error) {
 	return s.validatorSetCache.GetAll()
 }
 
-func (s *State) FirstRound(id string) (int, bool) {
+func (s *State) FirstRound(id string) (int64, bool) {
 	return s.validatorSetCache.FirstRound(id)
 }
 
@@ -225,11 +225,11 @@ func (s *State) SetBlock(block *types.Block) error {
 	return nil
 }
 
-func (s *State) LastBlockIndex() int {
+func (s *State) LastBlockIndex() int64 {
 	return s.lastBlock
 }
 
-func (s *State) GetFrame(index int) (*Frame, error) {
+func (s *State) GetFrame(index int64) (*Frame, error) {
 	res, ok := s.frameCache.Get(index)
 	if !ok {
 		return nil, cm.NewStoreErr("FrameCache", cm.KeyNotFound, strconv.Itoa(index))

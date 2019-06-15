@@ -5,10 +5,9 @@ import (
 	"math"
 	"sort"
 	"strconv"
-	"strings"
 
 	cm "github.com/andrecronje/babble/src/common"
-	"github.com/andrecronje/babble/src/peers"
+	"github.com/tendermint/tendermint/types"
 )
 
 type Key struct {
@@ -30,73 +29,40 @@ func (k TreKey) ToString() string {
 
 //------------------------------------------------------------------------------
 
-type ParticipantEventsCache struct {
-	participants *peers.PeerSet
-	rim          *cm.RollingIndexMap
+type ValidatorEventsCache struct {
+	rim *cm.RollingIndexMap
 }
 
-func NewParticipantEventsCache(size int) *ParticipantEventsCache {
-	return &ParticipantEventsCache{
-		participants: peers.NewPeerSet([]*peers.Peer{}),
-		rim:          cm.NewRollingIndexMap("ParticipantEvents", size),
+func NewValidatorEventsCache(size int64) *ValidatorEventsCache {
+	return &ValidatorEventsCache{
+		rim: cm.NewRollingIndexMap("ValidatorEvents", int(size)),
 	}
 }
 
-func (pec *ParticipantEventsCache) AddPeer(peer *peers.Peer) error {
-	pec.participants = pec.participants.WithNewPeer(peer)
-	return pec.rim.AddKey(peer.ID())
-}
-
-//particant is the CASE-INSENSITIVE string hex representation of the public key.
-func (pec *ParticipantEventsCache) participantID(participant string) (uint32, error) {
-	pUpper := strings.ToUpper(participant)
-	peer, ok := pec.participants.ByPubKey[pUpper]
-	if !ok {
-		return 0, cm.NewStoreErr("ParticipantEvents", cm.UnknownParticipant, pUpper)
-	}
-
-	return peer.ID(), nil
-}
-
-//Get returns participant events with index > skip
-func (pec *ParticipantEventsCache) Get(participant string, skipIndex int) ([]string, error) {
-	id, err := pec.participantID(participant)
+//Get returns validator events with index > skip
+func (pec *ValidatorEventsCache) Get(validator string, skipIndex int) ([]string, error) {
+	ve, err := pec.rim.Get(validator, skipIndex)
 	if err != nil {
 		return []string{}, err
 	}
 
-	pe, err := pec.rim.Get(id, skipIndex)
-	if err != nil {
-		return []string{}, err
-	}
-
-	res := make([]string, len(pe))
-	for k := 0; k < len(pe); k++ {
-		res[k] = pe[k].(string)
+	res := make([]string, len(ve))
+	for k := 0; k < len(ve); k++ {
+		res[k] = ve[k].(string)
 	}
 	return res, nil
 }
 
-func (pec *ParticipantEventsCache) GetItem(participant string, index int) (string, error) {
-	id, err := pec.participantID(participant)
-	if err != nil {
-		return "", err
-	}
-
-	item, err := pec.rim.GetItem(id, index)
+func (vec *ValidatorEventsCache) GetItem(validator string, index int) (string, error) {
+	item, err := vec.rim.GetItem(validator, index)
 	if err != nil {
 		return "", err
 	}
 	return item.(string), nil
 }
 
-func (pec *ParticipantEventsCache) GetLast(participant string) (string, error) {
-	id, err := pec.participantID(participant)
-	if err != nil {
-		return "", err
-	}
-
-	last, err := pec.rim.GetLast(id)
+func (vec *ValidatorEventsCache) GetLast(validator string) (string, error) {
+	last, err := pec.rim.GetLast(validator)
 	if err != nil {
 		return "", err
 	}
@@ -104,55 +70,48 @@ func (pec *ParticipantEventsCache) GetLast(participant string) (string, error) {
 	return last.(string), nil
 }
 
-func (pec *ParticipantEventsCache) Set(participant string, hash string, index int) error {
-	id, err := pec.participantID(participant)
-	if err != nil {
-		return err
-	}
-	return pec.rim.Set(id, hash, index)
+func (vec *ValidatorEventsCache) Set(validator string, hash string, index int) error {
+	return vec.rim.Set(validator, hash, index)
 }
 
 //returns [participant id] => lastKnownIndex
-func (pec *ParticipantEventsCache) Known() map[uint32]int {
-	return pec.rim.Known()
+func (vec *ValidatorEventsCache) Known() map[string]int64 {
+	return vec.rim.Known()
 }
 
 //------------------------------------------------------------------------------
 
-type PeerSetCache struct {
-	rounds             sort.IntSlice
-	peerSets           map[int]*peers.PeerSet
-	repertoireByPubKey map[string]*peers.Peer
-	repertoireByID     map[uint32]*peers.Peer
-	firstRounds        map[uint32]int
+type ValidatorSetCache struct {
+	rounds              sort.IntSlice
+	peerSets            map[int]*types.ValidatorSet
+	validatorsByAddress map[string]*types.Validator
+	firstRounds         map[string]int
 }
 
-func NewPeerSetCache() *PeerSetCache {
-	return &PeerSetCache{
-		rounds:             sort.IntSlice{},
-		peerSets:           make(map[int]*peers.PeerSet),
-		repertoireByPubKey: make(map[string]*peers.Peer),
-		repertoireByID:     make(map[uint32]*peers.Peer),
-		firstRounds:        make(map[uint32]int),
+func NewValidatorSetCache() *ValidatorSetCache {
+	return &ValidatorSetCache{
+		rounds:              sort.IntSlice{},
+		validatorSets:       make(map[int]*types.ValidatorSet),
+		validatorsByAddress: make(map[string]*types.Validator),
+		firstRounds:         make(map[string]int),
 	}
 }
 
-func (c *PeerSetCache) Set(round int, peerSet *peers.PeerSet) error {
-	if _, ok := c.peerSets[round]; ok {
-		return cm.NewStoreErr("PeerSetCache", cm.KeyAlreadyExists, strconv.Itoa(round))
+func (c *ValidatorSetCache) Set(round int64, validatorSet *types.ValidatorSet) error {
+	if _, ok := c.validatorSet[round]; ok {
+		return cm.NewStoreErr("ValidatorSetCache", cm.KeyAlreadyExists, strconv.Itoa(round))
 	}
 
-	c.peerSets[round] = peerSet
+	c.validatorSets[round] = validator
 
 	c.rounds = append(c.rounds, round)
 	c.rounds.Sort()
 
-	for _, p := range peerSet.Peers {
-		c.repertoireByPubKey[p.PubKeyString()] = p
-		c.repertoireByID[p.ID()] = p
-		fr, ok := c.firstRounds[p.ID()]
+	for _, v := range validatorSet.Validators {
+		c.validatorByAddress[v.Address().String()] = v
+		fr, ok := c.firstRounds[v.Address().String()]
 		if !ok || fr > round {
-			c.firstRounds[p.ID()] = round
+			c.firstRounds[v.Address().String()] = round
 		}
 	}
 
@@ -160,54 +119,50 @@ func (c *PeerSetCache) Set(round int, peerSet *peers.PeerSet) error {
 
 }
 
-func (c *PeerSetCache) Get(round int) (*peers.PeerSet, error) {
-	//check if directly in peerSets
-	ps, ok := c.peerSets[round]
+func (c *ValidatorSetCache) Get(round int64) (*types.ValidatorSet, error) {
+	//check if directly in ValidatorSet
+	vs, ok := c.validatorSet[round]
 	if ok {
-		return ps, nil
+		return vs, nil
 	}
 
 	//situate round in sorted rounds
 	if len(c.rounds) == 0 {
-		return nil, cm.NewStoreErr("PeerSetCache", cm.KeyNotFound, strconv.Itoa(round))
+		return nil, cm.NewStoreErr("ValidatorSetCache", cm.KeyNotFound, strconv.Itoa(round))
 	}
 
 	if round < c.rounds[0] {
-		return c.peerSets[c.rounds[0]], nil
+		return c.validatorSet[c.rounds[0]], nil
 	}
 
 	for i := 0; i < len(c.rounds)-1; i++ {
 		if round >= c.rounds[i] && round < c.rounds[i+1] {
-			return c.peerSets[c.rounds[i]], nil
+			return c.validatorSet[c.rounds[i]], nil
 		}
 	}
 
-	//return last PeerSet
-	return c.peerSets[c.rounds[len(c.rounds)-1]], nil
+	//return last ValidatorSet
+	return c.validatorSet[c.rounds[len(c.rounds)-1]], nil
 }
 
-func (c *PeerSetCache) GetAll() (map[int][]*peers.Peer, error) {
-	res := make(map[int][]*peers.Peer)
+func (c *ValidatorSetCache) GetAll() (map[int][]*types.Validator, error) {
+	res := make(map[int][]*types.Validator)
 	for _, r := range c.rounds {
-		res[r] = c.peerSets[r].Peers
+		res[r] = c.validatorSet[r].Validators
 	}
 	return res, nil
 }
 
-func (c *PeerSetCache) RepertoireByID() map[uint32]*peers.Peer {
-	return c.repertoireByID
+func (c *ValidatorSetCache) ValidatorByAddress() map[string]*types.Validator {
+	return c.validatorsByAddress
 }
 
-func (c *PeerSetCache) RepertoireByPubKey() map[string]*peers.Peer {
-	return c.repertoireByPubKey
-}
-
-func (c *PeerSetCache) FirstRound(id uint32) (int, bool) {
-	fr, ok := c.firstRounds[id]
+func (c *PeerSetCache) FirstRound(address string) (int64, bool) {
+	fr, ok := c.firstRounds[address]
 	if ok {
 		return fr, true
 	}
-	return math.MaxInt32, false
+	return math.MaxInt64, false
 }
 
 //------------------------------------------------------------------------------
