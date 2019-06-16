@@ -18,21 +18,21 @@ type RoundEvent struct {
 	Famous  common.Trilean
 }
 
-type RoundInfo struct {
+type Round struct {
 	CreatedEvents  map[string]RoundEvent
 	ReceivedEvents []string
 	queued         bool
 	decided        bool
 }
 
-func NewRoundInfo() *RoundInfo {
-	return &RoundInfo{
+func NewRound() *Round {
+	return &Round{
 		CreatedEvents:  make(map[string]RoundEvent),
 		ReceivedEvents: []string{},
 	}
 }
 
-func (r *RoundInfo) AddCreatedEvent(x string, witness bool) {
+func (r *Round) AddCreatedEvent(x string, witness bool) {
 	_, ok := r.CreatedEvents[x]
 	if !ok {
 		r.CreatedEvents[x] = RoundEvent{
@@ -41,11 +41,11 @@ func (r *RoundInfo) AddCreatedEvent(x string, witness bool) {
 	}
 }
 
-func (r *RoundInfo) AddReceivedEvent(x string) {
+func (r *Round) AddReceivedEvent(x string) {
 	r.ReceivedEvents = append(r.ReceivedEvents, x)
 }
 
-func (r *RoundInfo) SetFame(x string, f bool) {
+func (r *Round) SetFame(x string, f bool) {
 	e, ok := r.CreatedEvents[x]
 	if !ok {
 		e = RoundEvent{
@@ -69,7 +69,7 @@ witness that is not yet known when a super-majority of witnesses are already
 decided, has no chance of ever being famous. Once a Round is decided it stays
 decided, even if new witnesses are added after it was first decided.
 */
-func (r *RoundInfo) WitnessesDecided(validatorSet *types.ValidatorSet) bool {
+func (r *Round) WitnessesDecided(validatorSet *types.ValidatorSet) bool {
 	//if the round was already decided, it stays decided no matter what.
 	if r.decided {
 		return true
@@ -90,7 +90,7 @@ func (r *RoundInfo) WitnessesDecided(validatorSet *types.ValidatorSet) bool {
 }
 
 //return witnesses
-func (r *RoundInfo) Witnesses() []string {
+func (r *Round) Witnesses() []string {
 	res := []string{}
 	for x, e := range r.CreatedEvents {
 		if e.Witness {
@@ -102,7 +102,7 @@ func (r *RoundInfo) Witnesses() []string {
 }
 
 //return famous witnesses
-func (r *RoundInfo) FamousWitnesses() []string {
+func (r *Round) FamousWitnesses() []string {
 	res := []string{}
 	for x, e := range r.CreatedEvents {
 		if e.Witness && e.Famous == common.True {
@@ -112,12 +112,12 @@ func (r *RoundInfo) FamousWitnesses() []string {
 	return res
 }
 
-func (r *RoundInfo) IsDecided(witness string) bool {
+func (r *Round) IsDecided(witness string) bool {
 	w, ok := r.CreatedEvents[witness]
 	return ok && w.Witness && w.Famous != common.Undefined
 }
 
-func (r *RoundInfo) Marshal() ([]byte, error) {
+func (r *Round) Marshal() ([]byte, error) {
 	b := new(bytes.Buffer)
 	jh := new(codec.JsonHandle)
 	jh.Canonical = true
@@ -130,7 +130,7 @@ func (r *RoundInfo) Marshal() ([]byte, error) {
 	return b.Bytes(), nil
 }
 
-func (r *RoundInfo) Unmarshal(data []byte) error {
+func (r *Round) Unmarshal(data []byte) error {
 	b := bytes.NewBuffer(data)
 	jh := new(codec.JsonHandle)
 	jh.Canonical = true
@@ -139,6 +139,6 @@ func (r *RoundInfo) Unmarshal(data []byte) error {
 	return dec.Decode(r)
 }
 
-func (r *RoundInfo) IsQueued() bool {
+func (r *Round) IsQueued() bool {
 	return r.queued
 }

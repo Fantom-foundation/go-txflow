@@ -36,10 +36,10 @@ Event
 *******************************************************************************/
 
 type Event struct {
-	Transactions types.Txs `json:"transactions"` //the payload
-	Parents      []string  `json:"parents"`      //hashes of the event's parents, self-parent first
-	Index        int64     `json:"index"`        //index in the sequence of events created by Creator
-	Signature    []byte    `json:"signature"`    //creator's digital signature of body
+	Transactions types.Txs      `json:"transactions"` //the payload
+	Parents      []cmn.HexBytes `json:"parents"`      //hashes of the event's parents, self-parent first
+	Index        int64          `json:"index"`        //index in the sequence of events created by Creator
+	Signature    []byte         `json:"signature"`    //creator's digital signature of body
 
 	topologicalIndex int64 `json:"topological_index"`
 
@@ -49,16 +49,16 @@ type Event struct {
 
 	roundReceived *int64 `json:"round_received"`
 
-	lastAncestors    CoordinatesMap `json:"last_ancestors"`    //[participant pubkey] => last ancestor
-	firstDescendants CoordinatesMap `json:"first_descendants"` //[participant pubkey] => first descendant
+	lastAncestors    CoordinatesMap `json:"last_ancestors"`    //[validator pubkey] => last ancestor
+	firstDescendants CoordinatesMap `json:"first_descendants"` //[validator pubkey] => first descendant
 
-	Creator crypto.PubKey `json:"creator"`
-	hash    []byte        `json:"hash"`
-	hex     string        `json:"hex"`
+	Creator crypto.PubKey  `json:"creator"`
+	hash    []cmn.HexBytes `json:"hash"`
+	hex     string         `json:"hex"`
 }
 
 func NewEvent(txs types.Txs,
-	parents []string,
+	parents []cmn.HexBytes,
 	creator crypto.PubKey,
 	index int64) *Event {
 	return &Event{
@@ -70,11 +70,11 @@ func NewEvent(txs types.Txs,
 }
 
 func (e *Event) SelfParent() string {
-	return e.Parents[0]
+	return e.Parents[0].String()
 }
 
 func (e *Event) OtherParent() string {
-	return e.Parents[1]
+	return e.Parents[1].String()
 }
 
 func (e *Event) Sign(privKey crypto.PrivKey) error {

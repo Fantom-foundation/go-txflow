@@ -43,12 +43,12 @@ type Hashgraph struct {
 	commitCallback          InternalCommitCallback //commit block callback
 	topologicalIndex        int64                  //counter used to order events in topological order (only local)
 
-	ancestorCache     *common.LRU
-	selfAncestorCache *common.LRU
-	stronglySeeCache  *common.LRU
-	roundCache        *common.LRU
-	timestampCache    *common.LRU
-	witnessCache      *common.LRU
+	ancestors     map[Key]bool
+	selfAncestors map[Key]bool
+	stronglySees  map[TreKey]bool
+	rounds        map[string]int64
+	timestamps    map[string]int64
+	witnesses     map[string]bool
 
 	logger log.Logger
 }
@@ -56,18 +56,17 @@ type Hashgraph struct {
 //NewHashgraph instantiates a Hashgraph with an underlying data store and a
 //commit callback
 func NewHashgraph(state State, commitCallback InternalCommitCallback, logger log.Logger) *Hashgraph {
-	cacheSize := state.CacheSize()
 	hashgraph := Hashgraph{
-		State:             state,
-		PendingRounds:     NewPendingRoundsCache(),
-		commitCallback:    commitCallback,
-		ancestorCache:     common.NewLRU(cacheSize, nil),
-		selfAncestorCache: common.NewLRU(cacheSize, nil),
-		stronglySeeCache:  common.NewLRU(cacheSize, nil),
-		roundCache:        common.NewLRU(cacheSize, nil),
-		timestampCache:    common.NewLRU(cacheSize, nil),
-		witnessCache:      common.NewLRU(cacheSize, nil),
-		logger:            logger,
+		State:          state,
+		PendingRounds:  NewPendingRoundsCache(),
+		commitCallback: commitCallback,
+		ancestors:      make(map[Key]bool),
+		selfAncestors:  make(map[Key]bool),
+		stronglySees:   make(map[TreKey]bool),
+		rounds:         make(map[string]int64),
+		timestamps:     make(map[string]int64),
+		witnesses:      make(map[string]bool),
+		logger:         logger,
 	}
 
 	return &hashgraph
@@ -89,14 +88,14 @@ Private Methods
 
 //true if y is an ancestor of x
 func (h *Hashgraph) ancestor(x, y string) (bool, error) {
-	if c, ok := h.ancestorCache.Get(Key{x, y}); ok {
-		return c.(bool), nil
+	if c, ok := h.ancestors[Key{x, y}]; ok {
+		return c, nil
 	}
 	a, err := h._ancestor(x, y)
 	if err != nil {
 		return false, err
 	}
-	h.ancestorCache.Add(Key{x, y}, a)
+	h.ancestors[Key{x, y}] = a
 	return a, nil
 }
 
@@ -105,16 +104,17 @@ func (h *Hashgraph) _ancestor(x, y string) (bool, error) {
 		return true, nil
 	}
 
-	ex, err := h.State.GetEvent(x)
-	if err != nil {
-		return false, err
+	ex, ok := h.State.Events[x]
+	if !ok {
+		return false, nil
 	}
 
-	ey, err := h.State.GetEvent(y)
-	if err != nil {
-		return false, err
+	ey, ok := h.State.Events[y]
+	if !ok {
+		return false, nil
 	}
 
+	//Double check this logic, x's last Ancestors creator of Y
 	entry, ok := ex.lastAncestors[ey.Creator.Address().String()]
 
 	res := ok && entry.index >= ey.Index
@@ -124,14 +124,14 @@ func (h *Hashgraph) _ancestor(x, y string) (bool, error) {
 
 //true if y is a self-ancestor of x
 func (h *Hashgraph) selfAncestor(x, y string) (bool, error) {
-	if c, ok := h.selfAncestorCache.Get(Key{x, y}); ok {
-		return c.(bool), nil
+	if c, ok := h.selfAncestors[Key{x, y}]; ok {
+		return c, nil
 	}
 	a, err := h._selfAncestor(x, y)
 	if err != nil {
 		return false, err
 	}
-	h.selfAncestorCache.Add(Key{x, y}, a)
+	h.selfAncestors[Key{x, y}] = a
 	return a, nil
 }
 
@@ -139,14 +139,14 @@ func (h *Hashgraph) _selfAncestor(x, y string) (bool, error) {
 	if x == y {
 		return true, nil
 	}
-	ex, err := h.State.GetEvent(x)
-	if err != nil {
-		return false, err
+	ex, ok := h.State.Events[x]
+	if !ok {
+		return false, nil
 	}
 
-	ey, err := h.State.GetEvent(y)
-	if err != nil {
-		return false, err
+	ey, ok := h.State.Events[y]
+	if !ok {
+		return false, nil
 	}
 
 	return ex.Creator == ey.Creator && ex.Index >= ey.Index, nil
@@ -165,35 +165,36 @@ func (h *Hashgraph) see(x, y string) (bool, error) {
 
 //true if x strongly sees y based on validator set
 func (h *Hashgraph) stronglySee(x, y string, validators *types.ValidatorSet) (bool, error) {
-	if c, ok := h.stronglySeeCache.Get(TreKey{x, y, validators.Hash()}); ok {
-		return c.(bool), nil
+	if c, ok := h.stronglySees[TreKey{x, y, validators.Hash()}]; ok {
+		return c, nil
 	}
 	ss, err := h._stronglySee(x, y, validators)
 	if err != nil {
 		return false, err
 	}
-	h.stronglySeeCache.Add(TreKey{x, y, validators.Hash()}, ss)
+	h.stronglySees[TreKey{x, y, validators.Hash()}] = ss
 	return ss, nil
 }
 
 func (h *Hashgraph) _stronglySee(x, y string, validators *types.ValidatorSet) (bool, error) {
 
-	ex, err := h.State.GetEvent(x)
-	if err != nil {
-		return false, err
+	ex, ok := h.State.Events[x]
+	if !ok {
+		return false, nil
 	}
 
-	ey, err := h.State.GetEvent(y)
-	if err != nil {
-		return false, err
+	ey, ok := h.State.Events[y]
+	if !ok {
+		return false, nil
 	}
 
-	var c int64
+	c := int64(0)
 
 	validators.Iterate(func(index int, val *types.Validator) bool {
 		xla, xlaok := ex.lastAncestors[val.Address.String()]
 		yfd, yfdok := ey.firstDescendants[val.Address.String()]
 		if xlaok && yfdok && xla.index >= yfd.index {
+			// Need to accumulate voting power here
 			c++
 		}
 		return false
@@ -203,27 +204,27 @@ func (h *Hashgraph) _stronglySee(x, y string, validators *types.ValidatorSet) (b
 }
 
 func (h *Hashgraph) round(x string) (int64, error) {
-	if c, ok := h.roundCache.Get(x); ok {
-		return c.(int64), nil
+	if c, ok := h.rounds[x]; ok {
+		return c, nil
 	}
 	r, err := h._round(x)
 	if err != nil {
 		return -1, err
 	}
-	h.roundCache.Add(x, r)
+	h.rounds[x] = r
 	return r, nil
 }
 
 func (h *Hashgraph) _round(x string) (int64, error) {
-	ex, err := h.State.GetEvent(x)
-	if err != nil {
-		return math.MinInt32, err
+	ex, ok := h.State.Events[x]
+	if !ok {
+		return math.MinInt32, nil
 	}
 
 	parentRound := int64(-1)
 
 	if ex.SelfParent() != "" {
-		parentRound, err = h.round(ex.SelfParent())
+		parentRound, err := h.round(ex.SelfParent())
 		if err != nil {
 			return math.MinInt32, err
 		}
@@ -246,17 +247,17 @@ func (h *Hashgraph) _round(x string) (int64, error) {
 
 	//Retrieve the ParentRound's ValidatorSet and count strongly-seen witnesses based
 	//on this ValidatorSet.
-	parentRoundObj, err := h.State.GetRound(parentRound)
-	if err != nil {
-		return math.MinInt32, err
+	parentRoundObj, ok := h.State.Rounds[parentRound]
+	if !ok {
+		return math.MinInt64, nil
 	}
 
-	parentRoundValidatorSet, err := h.State.GetValidatorSet(parentRound)
-	if err != nil {
-		return math.MinInt32, err
+	parentRoundValidatorSet, ok := h.State.ValidatorSets[parentRound]
+	if !ok {
+		return math.MinInt64, nil
 	}
 
-	var c int64
+	c := int64(0)
 	for _, w := range parentRoundObj.Witnesses() {
 		ss, err := h.stronglySee(x, w, parentRoundValidatorSet)
 		if err != nil {
@@ -275,22 +276,22 @@ func (h *Hashgraph) _round(x string) (int64, error) {
 }
 
 func (h *Hashgraph) witness(x string) (bool, error) {
-	if c, ok := h.witnessCache.Get(x); ok {
-		return c.(bool), nil
+	if c, ok := h.witnesses[x]; ok {
+		return c, nil
 	}
 	r, err := h._witness(x)
 	if err != nil {
 		return false, err
 	}
-	h.witnessCache.Add(x, r)
+	h.witnesses[x] = r
 	return r, nil
 }
 
 //true if x is a witness (first event of a round for the owner)
 func (h *Hashgraph) _witness(x string) (bool, error) {
-	ex, err := h.State.GetEvent(x)
-	if err != nil {
-		return false, err
+	ex, ok := h.State.Events[x]
+	if !ok {
+		return false, nil
 	}
 
 	xRound, err := h.round(x)
@@ -299,8 +300,8 @@ func (h *Hashgraph) _witness(x string) (bool, error) {
 	}
 
 	//does the creator belong to the ValidatorSet?
-	validatorSet, err := h.State.GetValidatorSet(xRound)
-	if err != nil {
+	validatorSet, ok := h.State.ValidatorSets[xRound]
+	if !ok {
 		return false, err
 	}
 
@@ -320,9 +321,9 @@ func (h *Hashgraph) _witness(x string) (bool, error) {
 }
 
 func (h *Hashgraph) roundReceived(x string) (int64, error) {
-	ex, err := h.State.GetEvent(x)
-	if err != nil {
-		return -1, err
+	ex, ok := h.State.Events[x]
+	if !ok {
+		return -1, nil
 	}
 
 	res := int64(-1)
@@ -334,27 +335,27 @@ func (h *Hashgraph) roundReceived(x string) (int64, error) {
 }
 
 func (h *Hashgraph) lamportTimestamp(x string) (int64, error) {
-	if c, ok := h.timestampCache.Get(x); ok {
-		return c.(int64), nil
+	if c, ok := h.timestamps[x]; ok {
+		return c, nil
 	}
 	r, err := h._lamportTimestamp(x)
 	if err != nil {
 		return -1, err
 	}
-	h.timestampCache.Add(x, r)
+	h.timestamps[x] = r
 	return r, nil
 }
 
 func (h *Hashgraph) _lamportTimestamp(x string) (int64, error) {
 	plt := int64(-1)
 
-	ex, err := h.State.GetEvent(x)
-	if err != nil {
-		return math.MinInt32, err
+	ex, ok := h.State.Events[x]
+	if !ok {
+		return math.MinInt64, nil
 	}
 
 	if ex.SelfParent() != "" {
-		plt, err = h.lamportTimestamp(ex.SelfParent())
+		plt, err := h.lamportTimestamp(ex.SelfParent())
 		if err != nil {
 			return math.MinInt32, err
 		}
@@ -362,7 +363,7 @@ func (h *Hashgraph) _lamportTimestamp(x string) (int64, error) {
 
 	if ex.OtherParent() != "" {
 		opLT := int64(math.MinInt64)
-		if _, err := h.State.GetEvent(ex.OtherParent()); err == nil {
+		if _, ok := h.State.Events[ex.OtherParent()]; !ok {
 			//if we know the other-parent, fetch its Round directly
 			t, err := h.lamportTimestamp(ex.OtherParent())
 			if err != nil {
@@ -400,16 +401,17 @@ func (h *Hashgraph) checkSelfParent(event *Event) (err, warn error) {
 	selfParent := event.SelfParent()
 	creator := event.Creator
 
-	creatorLastKnown, err := h.State.LastEventFrom(creator.Address().String())
-	if err != nil {
+	creatorLastKnowns, ok := h.State.ValidatorEvents[creator.Address().String()]
+	if !ok {
 		//First Event
 		if common.Is(err, common.Empty) && selfParent == "" {
 			return nil, nil
 		}
 		return err, nil
 	}
+	creatorLastKnown := creatorLastKnowns[len(h.State.ValidatorEvents[creator.Address().String()])-1]
 
-	selfParentLegit := selfParent == creatorLastKnown
+	selfParentLegit := selfParent == creatorLastKnown.Hash().String()
 
 	//If you find this line using grep, the appearance of this event in the logs
 	//is to be expected in normal operation and may not be a cause for concern.
@@ -425,8 +427,8 @@ func (h *Hashgraph) checkOtherParent(event *Event) error {
 	otherParent := event.OtherParent()
 	if otherParent != "" {
 		//Check if we have it
-		_, err := h.State.GetEvent(otherParent)
-		if err != nil {
+		_, ok := h.State.Events[otherParent]
+		if !ok {
 			return fmt.Errorf("Other-parent not known")
 		}
 	}
@@ -438,14 +440,14 @@ func (h *Hashgraph) initEventCoordinates(event *Event) error {
 	event.lastAncestors = NewCoordinatesMap()
 	event.firstDescendants = NewCoordinatesMap()
 
-	selfParent, selfParentError := h.State.GetEvent(event.SelfParent())
-	otherParent, otherParentError := h.State.GetEvent(event.OtherParent())
+	selfParent, selfParentOk := h.State.Events[event.SelfParent()]
+	otherParent, otherParentOk := h.State.Events[event.OtherParent()]
 
-	if selfParentError != nil && otherParentError == nil {
+	if !selfParentOk && otherParentOk {
 		event.lastAncestors = otherParent.lastAncestors.Copy()
-	} else if otherParentError != nil && selfParentError == nil {
+	} else if !otherParentOk && selfParentOk {
 		event.lastAncestors = selfParent.lastAncestors.Copy()
-	} else if otherParentError == nil && selfParentError == nil {
+	} else if otherParentOk && selfParentOk {
 		selfParentLastAncestors := selfParent.lastAncestors
 		otherParentLastAncestors := otherParent.lastAncestors
 
@@ -479,12 +481,12 @@ func (h *Hashgraph) updateAncestorFirstDescendant(event *Event) error {
 	for _, c := range event.lastAncestors {
 		ah := c.hash
 		for {
-			a, err := h.State.GetEvent(ah)
-			if err != nil {
+			a, ok := h.State.Events[ah]
+			if !ok {
 				break
 			}
 
-			_, ok := a.firstDescendants[event.Creator.Address().String()]
+			_, ok = a.firstDescendants[event.Creator.Address().String()]
 			if !ok {
 				a.firstDescendants[event.Creator.Address().String()] = EventCoordinates{
 					index: event.Index,
@@ -503,22 +505,22 @@ func (h *Hashgraph) updateAncestorFirstDescendant(event *Event) error {
 }
 
 func (h *Hashgraph) createFrameEvent(x string) (*FrameEvent, error) {
-	ev, err := h.State.GetEvent(x)
-	if err != nil {
+	ev, ok := h.State.Events[x]
+	if !ok {
 		return nil, fmt.Errorf("FrameEvent %s not found", x)
 	}
 
-	round, err := h.round(x)
+	r, err := h.round(x)
 	if err != nil {
 		return nil, err
 	}
 
-	roundInfo, err := h.State.GetRound(round)
-	if err != nil {
-		return nil, err
+	round, ok := h.State.Rounds[r]
+	if !ok {
+		return nil, nil
 	}
 
-	te, ok := roundInfo.CreatedEvents[x]
+	te, ok := round.CreatedEvents[x]
 	if !ok {
 		return nil, err
 	}
@@ -532,7 +534,7 @@ func (h *Hashgraph) createFrameEvent(x string) (*FrameEvent, error) {
 
 	frameEvent := &FrameEvent{
 		Core:             ev,
-		Round:            round,
+		Round:            r,
 		LamportTimestamp: lt,
 		Witness:          witness,
 	}
@@ -555,11 +557,12 @@ func (h *Hashgraph) createRoot(validator string, head string) (*Root, error) {
 		for i := 0; i < ROOT_DEPTH; i++ {
 			index = index - 1
 			if index >= 0 {
-				peh, err := h.State.ValidatorEvent(validator, index)
-				if err != nil {
+				pehs, ok := h.State.ValidatorEvents[validator]
+				if !ok {
 					break
 				}
-				rev, err := h.createFrameEvent(peh)
+				peh := h.State.ValidatorEvents[validator][index]
+				rev, err := h.createFrameEvent(peh.Hash().String())
 				if err != nil {
 					return nil, err
 				}
@@ -677,28 +680,22 @@ func (h *Hashgraph) InsertFrameEvent(frameEvent *FrameEvent) error {
 	event := frameEvent.Core
 
 	//Set caches so round, witness, and timestamp won't be recalculated
-	h.roundCache.Add(event.Hex(), frameEvent.Round)
-	h.witnessCache.Add(event.Hex(), frameEvent.Witness)
-	h.timestampCache.Add(event.Hex(), frameEvent.LamportTimestamp)
+	h.rounds[event.Hex()] = frameEvent.Round
+	h.witnesses[event.Hex()] = frameEvent.Witness
+	h.timestamps[event.Hex()] = frameEvent.LamportTimestamp
 
 	//Set the event's private fields for later use
 	event.SetRound(frameEvent.Round)
 	event.SetLamportTimestamp(frameEvent.LamportTimestamp)
 
 	//Create/update RoundInfo object in store
-	roundInfo, err := h.State.GetRound(frameEvent.Round)
-	if err != nil {
-		if !common.Is(err, common.KeyNotFound) {
-			return err
-		}
-		roundInfo = NewRoundInfo()
+	round, ok := h.State.Rounds[frameEvent.Round]
+	if !ok {
+		round = NewRound()
 	}
-	roundInfo.AddCreatedEvent(event.Hex(), frameEvent.Witness)
+	round.AddCreatedEvent(event.Hex(), frameEvent.Witness)
 
-	err = h.State.SetRound(frameEvent.Round, roundInfo)
-	if err != nil {
-		return err
-	}
+	h.State.Rounds[frameEvent.Round] = round
 
 	//Init EventCoordinates.
 	if err := h.initEventCoordinates(event); err != nil {
@@ -727,9 +724,9 @@ func (h *Hashgraph) InsertFrameEvent(frameEvent *FrameEvent) error {
 //witnesses if necessary. Pushes Rounds in the PendingRounds queue if necessary.
 func (h *Hashgraph) DivideRounds() error {
 	for _, hash := range h.UndeterminedEvents {
-		ev, err := h.State.GetEvent(hash)
-		if err != nil {
-			return err
+		ev, ok := h.State.Events[hash]
+		if !ok {
+			return nil
 		}
 
 		updateEvent := false
@@ -745,16 +742,13 @@ func (h *Hashgraph) DivideRounds() error {
 			ev.SetRound(roundNumber)
 			updateEvent = true
 
-			roundInfo, err := h.State.GetRound(roundNumber)
-			if err != nil {
-				if !common.Is(err, common.KeyNotFound) {
-					return err
-				}
-				roundInfo = NewRoundInfo()
+			round, ok := h.State.Rounds[roundNumber]
+			if !ok {
+				round = NewRound()
 			}
 
 			if !h.PendingRounds.Queued(roundNumber) &&
-				!roundInfo.decided &&
+				!round.decided &&
 				(h.roundLowerBound == nil || roundNumber > *h.roundLowerBound) {
 
 				h.PendingRounds.Set(&PendingRound{roundNumber, false})
@@ -765,12 +759,9 @@ func (h *Hashgraph) DivideRounds() error {
 				return err
 			}
 
-			roundInfo.AddCreatedEvent(hash, witness)
+			round.AddCreatedEvent(hash, witness)
 
-			err = h.State.SetRound(roundNumber, roundInfo)
-			if err != nil {
-				return err
-			}
+			h.State.Rounds[roundNumber] = round
 		}
 
 		//Compute the Event's LamportTimestamp
@@ -807,14 +798,14 @@ func (h *Hashgraph) DecideFame() error {
 	for _, r := range h.PendingRounds.GetOrderedPendingRounds() {
 		roundIndex := r.Index
 
-		rRoundInfo, err := h.State.GetRound(roundIndex)
-		if err != nil {
+		rRoundInfo, ok := h.State.Rounds[roundIndex]
+		if !ok {
 			return err
 		}
 
-		rValidatorSet, err := h.State.GetValidatorSet(roundIndex)
-		if err != nil {
-			return err
+		rValidatorSet, ok := h.State.ValidatorSets[roundIndex]
+		if !ok {
+			return nil
 		}
 
 		for _, x := range rRoundInfo.Witnesses() {
@@ -828,9 +819,9 @@ func (h *Hashgraph) DecideFame() error {
 					return err
 				}
 
-				jValidatorSet, err := h.State.GetValidatorSet(j)
-				if err != nil {
-					return err
+				jValidatorSet, ok := h.State.ValidatorSets[j]
+				if !ok {
+					return nil
 				}
 
 				for _, y := range jRoundInfo.Witnesses() {
@@ -847,9 +838,9 @@ func (h *Hashgraph) DecideFame() error {
 							return err
 						}
 
-						jPrevValidatorSet, err := h.State.GetValidatorSet(j - 1)
-						if err != nil {
-							return err
+						jPrevValidatorSet, ok := h.State.ValidatorSets[j-1]
+						if !ok {
+							return nil
 						}
 
 						//collection of witnesses from round j-1 that are
@@ -941,9 +932,9 @@ func (h *Hashgraph) DecideRoundReceived() error {
 				return err
 			}
 
-			tValidators, err := h.State.GetValidatorSet(i)
-			if err != nil {
-				return err
+			tValidators, ok := h.State.ValidatorSets[i]
+			if !ok {
+				return nil
 			}
 
 			/*
@@ -1065,6 +1056,7 @@ func (h *Hashgraph) ProcessDecidedRounds() error {
 			}
 
 			lastBlockIndex := h.State.LastBlockIndex()
+			//Create a new block here
 			block, err := NewBlockFromFrame(lastBlockIndex+1, frame)
 			if err != nil {
 				return err
@@ -1110,9 +1102,9 @@ func (h *Hashgraph) GetFrame(roundReceived int64) (*Frame, error) {
 		return nil, err
 	}
 
-	validatorSet, err := h.State.GetValidatorSet(roundReceived)
-	if err != nil {
-		return nil, err
+	validatorSet, ok := h.State.ValidatorSets[roundReceived]
+	if !ok {
+		return nil, nil
 	}
 
 	events := []*FrameEvent{}
@@ -1207,12 +1199,12 @@ func (h *Hashgraph) Reset(block *types.Block, frame *Frame) error {
 	h.PendingLoadedEvents = 0
 	h.topologicalIndex = 0
 
-	cacheSize := h.State.CacheSize()
-	h.ancestorCache = common.NewLRU(cacheSize, nil)
-	h.selfAncestorCache = common.NewLRU(cacheSize, nil)
-	h.stronglySeeCache = common.NewLRU(cacheSize, nil)
-	h.roundCache = common.NewLRU(cacheSize, nil)
-	h.witnessCache = common.NewLRU(cacheSize, nil)
+	h.ancestors = make(map[Key]bool)
+	h.selfAncestors = make(map[Key]bool)
+	h.stronglySees = make(map[TreKey]bool)
+	h.rounds = make(map[string]int64)
+	h.timestamps = make(map[string]int64)
+	h.witnesses = make(map[string]bool)
 
 	//Initialize new Roots
 	if err := h.State.Reset(frame); err != nil {
