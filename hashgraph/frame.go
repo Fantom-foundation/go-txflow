@@ -10,8 +10,8 @@ type Frame struct {
 	Round         int64 //RoundReceived
 	Validators    []*types.Validator
 	Roots         map[string]*Root
-	Events        []*FrameEvent              //Events with RoundReceived = Round
-	ValidatorSets map[int][]*types.Validator //[round] => Peers
+	Events        []*FrameEvent                 //Events with RoundReceived = Round
+	ValidatorSets map[int64]*types.ValidatorSet //[round] => Peers
 }
 
 func (f *Frame) SortedFrameEvents() []*FrameEvent {

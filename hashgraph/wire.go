@@ -3,6 +3,7 @@ package hashgraph
 import (
 	amino "github.com/tendermint/go-amino"
 	cryptoAmino "github.com/tendermint/tendermint/crypto/encoding/amino"
+	"github.com/tendermint/tendermint/types"
 )
 
 var cdc = amino.NewCodec()
@@ -13,7 +14,7 @@ func init() {
 
 func RegisterBlockAmino(cdc *amino.Codec) {
 	cryptoAmino.RegisterAmino(cdc)
-	RegisterEvidences(cdc)
+	types.RegisterEvidences(cdc)
 }
 
 // GetCodec returns a codec used by the package. For testing purposes only.
@@ -23,5 +24,5 @@ func GetCodec() *amino.Codec {
 
 // For testing purposes only
 func RegisterMockEvidencesGlobal() {
-	RegisterMockEvidences(cdc)
+	types.RegisterMockEvidences(cdc)
 }

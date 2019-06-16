@@ -49,7 +49,7 @@ func (s *State) SetValidatorSet(round int64, validatorSet *types.ValidatorSet) e
 }
 
 func (s *State) addValidator(v *types.Validator) error {
-	if !s.ValidatorEvents[v.Address.String()] {
+	if _, ok := s.ValidatorEvents[v.Address.String()]; !ok {
 		s.ValidatorEvents[v.Address.String()] = []*Event{}
 	}
 
@@ -61,15 +61,8 @@ func (s *State) addValidator(v *types.Validator) error {
 }
 
 func (s *State) SetEvent(event *Event) error {
-	key := event.Hash().String()
-	_, err := s.Events[key]
-	if err != nil && !cm.Is(err, cm.KeyNotFound) {
-		return err
-	}
-	if cm.Is(err, cm.KeyNotFound) {
-		s.ValidatorEvents[event.Creator.Address().String()] = append(s.ValidatorEvents[event.Creator.Address().String()], event)
-	}
-	s.eventCache.Add(key, event)
+	s.ValidatorEvents[event.Creator.Address().String()] = append(s.ValidatorEvents[event.Creator.Address().String()], event)
+	s.Events[event.Hash().String()] = event
 	return nil
 }
 
@@ -78,4 +71,26 @@ func (s *State) AddConsensusEvent(event *Event) error {
 	s.totConsensusEvents++
 	s.lastConsensusEvents[event.Creator.Address().String()] = event.Hash().String()
 	return nil
+}
+
+func (s *State) LastRound() int64 {
+	return s.lastRound
+}
+
+func (s *State) LastBlockIndex() int64 {
+	return s.lastBlock
+}
+
+func (s *State) SetBlock(block *types.Block) error {
+	index := block.Header.Height
+	s.Blocks[index] = block
+	if index > s.lastBlock {
+		s.lastBlock = index
+	}
+	return nil
+}
+
+func (s *State) LastConsensusEventFrom(validator string) (last string, err error) {
+	last, _ = s.lastConsensusEvents[validator]
+	return
 }

@@ -800,7 +800,7 @@ func (h *Hashgraph) DecideFame() error {
 
 		rRoundInfo, ok := h.State.Rounds[roundIndex]
 		if !ok {
-			return err
+			return nil
 		}
 
 		rValidatorSet, ok := h.State.ValidatorSets[roundIndex]
@@ -814,9 +814,9 @@ func (h *Hashgraph) DecideFame() error {
 			}
 		VOTE_LOOP:
 			for j := roundIndex + 1; j <= h.State.LastRound(); j++ {
-				jRoundInfo, err := h.State.GetRound(j)
-				if err != nil {
-					return err
+				jRoundInfo, ok := h.State.Rounds[j]
+				if !ok {
+					return nil
 				}
 
 				jValidatorSet, ok := h.State.ValidatorSets[j]
@@ -833,9 +833,9 @@ func (h *Hashgraph) DecideFame() error {
 						}
 						setVote(votes, y, x, ycx)
 					} else {
-						jPrevRoundInfo, err := h.State.GetRound(j - 1)
-						if err != nil {
-							return err
+						jPrevRoundInfo, ok := h.State.Rounds[j-1]
+						if !ok {
+							return nil
 						}
 
 						jPrevValidatorSet, ok := h.State.ValidatorSets[j-1]
@@ -898,10 +898,7 @@ func (h *Hashgraph) DecideFame() error {
 			decidedRounds = append(decidedRounds, roundIndex)
 		}
 
-		err = h.State.SetRound(roundIndex, rRoundInfo)
-		if err != nil {
-			return err
-		}
+		h.State.Rounds[roundIndex] = rRoundInfo
 	}
 
 	h.PendingRounds.Update(decidedRounds)
@@ -927,9 +924,9 @@ func (h *Hashgraph) DecideRoundReceived() error {
 		}
 
 		for i := r + 1; i <= h.State.LastRound(); i++ {
-			tr, err := h.State.GetRound(i)
-			if err != nil {
-				return err
+			tr, ok := h.State.Rounds[i]
+			if !ok {
+				return nil
 			}
 
 			tValidators, ok := h.State.ValidatorSets[i]
@@ -970,9 +967,9 @@ func (h *Hashgraph) DecideRoundReceived() error {
 			if len(s) == len(fws) && int64(len(s)) > tValidators.TotalVotingPower()*2/3 {
 				received = true
 
-				ex, err := h.State.GetEvent(x)
-				if err != nil {
-					return err
+				ex, ok := h.State.Events[x]
+				if !ok {
+					return nil
 				}
 
 				ex.SetRoundReceived(i)
@@ -983,10 +980,7 @@ func (h *Hashgraph) DecideRoundReceived() error {
 				}
 
 				tr.AddReceivedEvent(x)
-				err = h.State.SetRound(i, tr)
-				if err != nil {
-					return err
-				}
+				h.State.Rounds[i] = tr
 
 				//break out of i loop
 				break
@@ -1023,9 +1017,9 @@ func (h *Hashgraph) ProcessDecidedRounds() error {
 			break
 		}
 
-		round, err := h.State.GetRound(r.Index)
-		if err != nil {
-			return err
+		round, ok := h.State.Rounds[r.Index]
+		if !ok {
+			return nil
 		}
 
 		frame, err := h.GetFrame(r.Index)
@@ -1091,15 +1085,15 @@ func (h *Hashgraph) ProcessDecidedRounds() error {
 //GetFrame computes the Frame corresponding to a RoundReceived.
 func (h *Hashgraph) GetFrame(roundReceived int64) (*Frame, error) {
 	//Try to get it from the Store first
-	frame, err := h.State.GetFrame(roundReceived)
-	if err == nil || !common.Is(err, common.KeyNotFound) {
-		return frame, err
+	frame, ok := h.State.Frames[roundReceived]
+	if ok {
+		return frame, nil
 	}
 
 	//Get the Round and corresponding consensus Events
-	round, err := h.State.GetRound(roundReceived)
-	if err != nil {
-		return nil, err
+	round, ok := h.State.Rounds[roundReceived]
+	if !ok {
+		return nil, nil
 	}
 
 	validatorSet, ok := h.State.ValidatorSets[roundReceived]
@@ -1129,7 +1123,7 @@ func (h *Hashgraph) GetFrame(roundReceived int64) (*Frame, error) {
 		p := ev.Core.Creator
 		r, ok := roots[p.Address().String()]
 		if !ok {
-			r, err = h.createRoot(p.Address().String(), ev.Core.SelfParent())
+			r, err := h.createRoot(p.Address().String(), ev.Core.SelfParent())
 			if err != nil {
 				return nil, err
 			}
@@ -1142,34 +1136,26 @@ func (h *Hashgraph) GetFrame(roundReceived int64) (*Frame, error) {
 		the Frame. For the participants that have no Events in this Frame, we
 		create a Root from their last consensus Event, or their last known Root
 	*/
-	for p, validator := range h.State.RepertoireByPubKey() {
-		//Ignore if participant wasn't added before roundReceived
-		firstRound, ok := h.State.FirstRound(validator.Address.String())
-		if !ok || firstRound > roundReceived {
-			continue
-		}
 
-		if _, ok := roots[p]; !ok {
+	// Grab the round and add a root for all the validators
+	for p, validator := range h.State.ValidatorSets[roundReceived].Validators {
+		//Ignore if participant wasn't added before roundReceived
+
+		if _, ok := roots[validator.Address.String()]; !ok {
 			var root *Root
 
-			lastConsensusEventHash, err := h.State.LastConsensusEventFrom(p)
+			lastConsensusEventHash, err := h.State.LastConsensusEventFrom(validator.Address.String())
 			if err != nil {
 				return nil, err
 			}
 
-			root, err = h.createRoot(p, lastConsensusEventHash)
+			root, err = h.createRoot(validator.Address.String(), lastConsensusEventHash)
 			if err != nil {
 				return nil, err
 			}
 
-			roots[p] = root
+			roots[validator.Address.String()] = root
 		}
-	}
-
-	//Get all ValidatorSets
-	allValidatorSets, err := h.State.GetAllValidatorSets()
-	if err != nil {
-		return nil, err
 	}
 
 	res := &Frame{
@@ -1177,56 +1163,12 @@ func (h *Hashgraph) GetFrame(roundReceived int64) (*Frame, error) {
 		Validators:    validatorSet.Validators,
 		Roots:         roots,
 		Events:        events,
-		ValidatorSets: allValidatorSets,
+		ValidatorSets: h.State.ValidatorSets,
 	}
 
-	if err := h.State.SetFrame(res); err != nil {
-		return nil, err
-	}
+	h.State.Frames[frame.Round] = frame
 
 	return res, nil
-}
-
-//Reset clears the Hashgraph and resets it from a new base.
-func (h *Hashgraph) Reset(block *types.Block, frame *Frame) error {
-	//Clear all state
-	h.LastConsensusRound = nil
-	h.FirstConsensusRound = nil
-	h.AnchorBlock = nil
-
-	h.UndeterminedEvents = []string{}
-	h.PendingRounds = NewPendingRoundsCache()
-	h.PendingLoadedEvents = 0
-	h.topologicalIndex = 0
-
-	h.ancestors = make(map[Key]bool)
-	h.selfAncestors = make(map[Key]bool)
-	h.stronglySees = make(map[TreKey]bool)
-	h.rounds = make(map[string]int64)
-	h.timestamps = make(map[string]int64)
-	h.witnesses = make(map[string]bool)
-
-	//Initialize new Roots
-	if err := h.State.Reset(frame); err != nil {
-		return err
-	}
-
-	//Insert FrameEvents
-	sortedFrameEvents := frame.SortedFrameEvents()
-	for _, rev := range sortedFrameEvents {
-		if err := h.InsertFrameEvent(rev); err != nil {
-			return err
-		}
-	}
-
-	//Insert Block
-	if err := h.State.SetBlock(block); err != nil {
-		return err
-	}
-	h.setLastConsensusRound(block.Height)
-	h.setRoundLowerBound(block.Height)
-
-	return nil
 }
 
 /*******************************************************************************

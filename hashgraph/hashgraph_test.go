@@ -1,7 +1,6 @@
 package hashgraph
 
 import (
-	"crypto/ecdsa"
 	"fmt"
 	"os"
 	"reflect"
@@ -10,7 +9,8 @@ import (
 	"testing"
 
 	"github.com/andrecronje/babble/src/common"
-	bkeys "github.com/andrecronje/babble/src/crypto/keys"
+	"github.com/tendermint/tendermint/crypto"
+	"github.com/tendermint/tendermint/crypto/ed25519"
 	"github.com/tendermint/tendermint/libs/log"
 	"github.com/tendermint/tendermint/types"
 )
@@ -22,24 +22,14 @@ var (
 )
 
 type TestNode struct {
-	PubID    uint32
-	PubBytes []byte
-	PubHex   string
-	Key      *ecdsa.PrivateKey
-	Events   []*Event
+	Key    crypto.PrivKey
+	Events []*Event
 }
 
-func NewTestNode(key *ecdsa.PrivateKey) TestNode {
-	pubBytes := bkeys.FromPublicKey(&key.PublicKey)
-	pubID := bkeys.PublicKeyID(&key.PublicKey)
-	pubHex := bkeys.PublicKeyHex(&key.PublicKey)
-
+func NewTestNode(key crypto.PrivKey) TestNode {
 	node := TestNode{
-		PubID:    pubID,
-		PubBytes: pubBytes,
-		PubHex:   pubHex,
-		Key:      key,
-		Events:   []*Event{},
+		Key:    key,
+		Events: []*Event{},
 	}
 	return node
 }
@@ -64,12 +54,11 @@ type roundItem struct {
 
 type play struct {
 	to          int
-	index       int
-	selfParent  string
-	otherParent string
+	index       int64
+	selfParent  cmn.HexBytes
+	otherParent cmn.HexBytes
 	name        string
-	txPayload   [][]byte
-	//sigPayload  []BlockSignature
+	txPayload   types.Txs
 }
 
 func testLogger(t testing.TB) log.Logger {
@@ -82,15 +71,14 @@ func initHashgraphNodes(n int) ([]TestNode, map[string]string, *[]*Event, *types
 	index := make(map[string]string)
 	nodes := []TestNode{}
 	orderedEvents := &[]*Event{}
-	keys := map[string]*ecdsa.PrivateKey{}
+	keys := map[string]crypto.PrivKey{}
 	pirs := []*types.Validator{}
 
 	for i := 0; i < n; i++ {
-		key, _ := bkeys.GenerateECDSAKey()
-		pubHex := bkeys.PublicKeyHex(&key.PublicKey)
-		p := types.NewValidator(pubHex, "", "")
+		key := ed25519.GenPrivKey()
+		p := types.NewValidator(key.PubKey(), 1)
 		pirs = append(pirs, p)
-		keys[pubHex] = key
+		keys[key.PubKey().Address().String()] = key
 		nodes = append(nodes, NewTestNode(key))
 	}
 
@@ -102,10 +90,8 @@ func initHashgraphNodes(n int) ([]TestNode, map[string]string, *[]*Event, *types
 func playEvents(plays []play, nodes []TestNode, index map[string]string, orderedEvents *[]*Event) {
 	for _, p := range plays {
 		e := NewEvent(p.txPayload,
-			nil,
-			p.sigPayload,
 			[]string{index[p.selfParent], index[p.otherParent]},
-			nodes[p.to].PubBytes,
+			nodes[p.to].Key.PubKey(),
 			p.index)
 		nodes[p.to].signAndAddEvent(e, p.name, index, orderedEvents)
 	}
