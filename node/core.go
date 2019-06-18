@@ -62,7 +62,7 @@ func NewCore(
 
 	core.hashgraph = hashgraph.NewHashgraph(state, core.Commit, logger)
 
-	core.hashgraph.Init(genesisValidators)
+	core.hashgraph.Init(validators)
 
 	return core
 }

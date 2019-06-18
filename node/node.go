@@ -7,7 +7,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -720,10 +719,6 @@ func (n *Node) Run(gossip bool) {
 		switch state {
 		case Babbling:
 			n.babble(gossip)
-		case CatchingUp:
-			n.fastForward()
-		case Joining:
-			n.join()
 		case Shutdown:
 			return
 		}
@@ -743,12 +738,6 @@ func (n *Node) Leave() error {
 
 	defer n.Shutdown()
 
-	err := n.core.Leave(n.config.P2P.HandshakeTimeout)
-	if err != nil {
-		n.logger.Error("Leaving", "err", err)
-		return err
-	}
-
 	return nil
 }
 
@@ -762,7 +751,6 @@ func (n *Node) Shutdown() {
 		n.setState(Shutdown)
 
 		//Stop and wait for concurrent operations
-		close(n.shutdownCh)
 
 		n.waitRoutines()
 
@@ -772,19 +760,18 @@ func (n *Node) Shutdown() {
 
 		//transport and store should only be closed once all concurrent operations
 		//are finished otherwise they will panic trying to use close objects
-		n.trans.Close()
 
-		n.core.hashgraph.Store.Close()
+		//n.core.hashgraph.State.Close()
 	}
 }
 
 // GetID returns the numeric ID of the node's validator
-func (n *Node) GetID() uint32 {
-	return n.core.validator.ID()
+func (n *Node) GetID() string {
+	return n.core.validator.GetPubKey().Address().String()
 }
 
 // GetStats returns information about the node.
-func (n *Node) GetStats() map[string]string {
+/*func (n *Node) GetStats() map[string]string {
 	toString := func(i *int) string {
 		if i == nil {
 			return "nil"
@@ -823,11 +810,11 @@ func (n *Node) GetStats() map[string]string {
 		"moniker":                n.core.validator.Moniker,
 	}
 	return s
-}
+}*/
 
 // GetBlock returns a block
-func (n *Node) GetBlock(blockIndex int) (*hashgraph.Block, error) {
-	return n.core.hashgraph.Store.GetBlock(blockIndex)
+func (n *Node) GetBlock(height int64) *types.Block {
+	return n.core.hashgraph.State.Blocks[height]
 }
 
 /*******************************************************************************
@@ -839,7 +826,7 @@ Background
 func (n *Node) doBackgroundWork() {
 	for {
 		select {
-		case rpc := <-n.netCh:
+		/*case rpc := <-n.netCh:
 			n.goFunc(func() {
 				n.logger.Debug("Processing RPC")
 				n.processRPC(rpc)
@@ -854,7 +841,7 @@ func (n *Node) doBackgroundWork() {
 		case <-n.sigintCh:
 			n.logger.Debug("Reacting to SIGINT - LEAVE")
 			n.Leave()
-			os.Exit(0)
+			os.Exit(0)*/
 		}
 	}
 }
@@ -891,41 +878,17 @@ func (n *Node) babble(gossip bool) {
 		case <-n.controlTimer.tickCh:
 			if gossip {
 				n.logger.Debug("Time to gossip!")
-				peer := n.core.peerSelector.Next()
+				//Need to select a peer from address book here and gossip to them
+				/*peer := n.core.peerSelector.Next()
 				if peer != nil {
 					n.goFunc(func() { n.gossip(peer) })
 				} else {
 					n.monologue()
-				}
+				}*/
 			}
 			n.resetTimer()
-		case <-n.shutdownCh:
-			return
 		}
 	}
-}
-
-// monologue is called when the node is alone in the network but wants to record
-// some events anyway.
-func (n *Node) monologue() error {
-	n.coreLock.Lock()
-	defer n.coreLock.Unlock()
-
-	if n.core.Busy() {
-		err := n.core.AddSelfEvent("")
-		if err != nil {
-			n.logger.Error("monologue, AddSelfEvent()", "err", err)
-			return err
-		}
-
-		err = n.core.ProcessSigPool()
-		if err != nil {
-			n.logger.Error("monologue, ProcessSigPool()", "err", err)
-			return err
-		}
-	}
-
-	return nil
 }
 
 // gossip performs a pull-push gossip operation with the selected validator.
