@@ -14,8 +14,7 @@ func (k Key) ToString() string {
 }
 
 type TreKey struct {
-	x, y string
-	z    []byte
+	x, y, z string
 }
 
 func (k TreKey) ToString() string {

@@ -3,6 +3,8 @@ package hashgraph
 import (
 	"sort"
 
+	"github.com/tendermint/tendermint/crypto/merkle"
+	cmn "github.com/tendermint/tendermint/libs/common"
 	"github.com/tendermint/tendermint/types"
 )
 
@@ -22,4 +24,17 @@ func (f *Frame) SortedFrameEvents() []*FrameEvent {
 	sorted = append(sorted, f.Events...)
 	sort.Sort(sorted)
 	return sorted
+}
+
+func (f *Frame) Hash() cmn.HexBytes {
+	if f == nil {
+		return nil
+	}
+	return merkle.SimpleHashFromByteSlices([][]byte{
+		cdcEncode(f.Round),
+		cdcEncode(f.Validators),
+		cdcEncode(f.Roots),
+		cdcEncode(f.Events),
+		cdcEncode(f.ValidatorSets),
+	})
 }

@@ -5,14 +5,15 @@ import (
 )
 
 type State struct {
-	Events          map[string]*Event             //hash => Event
-	Rounds          map[int64]*Round              //round number => Round
-	Blocks          map[int64]*types.Block        //index => Block
-	Frames          map[int64]*Frame              //round received => Frame
-	ValidatorSets   map[int64]*types.ValidatorSet //start round => ValidatorSet
-	ValidatorEvents map[string][]*Event           //pubkey => Events
-	Roots           map[string]*Root              //[validator] => Root
-	ConsensusEvents map[string]int64
+	Events              map[string]*Event             //hash => Event
+	Rounds              map[int64]*Round              //round number => Round
+	Blocks              map[int64]*types.Block        //index => Block
+	Frames              map[int64]*Frame              //round received => Frame
+	ValidatorSets       map[int64]*types.ValidatorSet //start round => ValidatorSet
+	ValidatorEvents     map[string][]*Event           //pubkey => Events
+	ValidatorHeadEvents map[string]int
+	Roots               map[string]*Root //[validator] => Root
+	ConsensusEvents     map[string]int64
 
 	totConsensusEvents  int64
 	lastRound           int64

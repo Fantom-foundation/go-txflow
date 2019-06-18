@@ -1,20 +1,6 @@
 package hashgraph
 
-import (
-	"fmt"
-	"os"
-	"reflect"
-	"sort"
-	"strings"
-	"testing"
-
-	"github.com/andrecronje/babble/src/common"
-	"github.com/tendermint/tendermint/crypto"
-	"github.com/tendermint/tendermint/crypto/ed25519"
-	"github.com/tendermint/tendermint/libs/log"
-	"github.com/tendermint/tendermint/types"
-)
-
+/*
 var (
 	cacheSize = 100
 	n         = 3
@@ -34,15 +20,15 @@ func NewTestNode(key crypto.PrivKey) TestNode {
 	return node
 }
 
-func (node *TestNode) signAndAddEvent(event *Event, name string, index map[string]string, orderedEvents *[]*Event) {
+func (node *TestNode) signAndAddEvent(event *Event, name cmn.HexBytes, index map[cmn.HexBytes]cmn.HexBytes, orderedEvents *[]*Event) {
 	event.Sign(node.Key)
 	node.Events = append(node.Events, event)
-	index[name] = event.Hex()
+	index[name] = event.Hash()
 	*orderedEvents = append(*orderedEvents, event)
 }
 
 type ancestryItem struct {
-	descendant, ancestor string
+	descendant, ancestor cmn.HexBytes
 	val                  bool
 	err                  bool
 }
@@ -57,7 +43,7 @@ type play struct {
 	index       int64
 	selfParent  cmn.HexBytes
 	otherParent cmn.HexBytes
-	name        string
+	name        cmn.HexBytes
 	txPayload   types.Txs
 }
 
@@ -65,10 +51,9 @@ func testLogger(t testing.TB) log.Logger {
 	return log.NewTMLogger(log.NewSyncWriter(os.Stdout)).With("id", "test")
 }
 
-/* Initialisation functions */
 
-func initHashgraphNodes(n int) ([]TestNode, map[string]string, *[]*Event, *types.ValidatorSet) {
-	index := make(map[string]string)
+func initHashgraphNodes(n int) ([]TestNode, map[cmn.HexBytes]cmn.HexBytes, *[]*Event, *types.ValidatorSet) {
+	index := make(map[cmn.HexBytes]cmn.HexBytes)
 	nodes := []TestNode{}
 	orderedEvents := &[]*Event{}
 	keys := map[string]crypto.PrivKey{}
@@ -87,10 +72,10 @@ func initHashgraphNodes(n int) ([]TestNode, map[string]string, *[]*Event, *types
 	return nodes, index, orderedEvents, validatorSet
 }
 
-func playEvents(plays []play, nodes []TestNode, index map[string]string, orderedEvents *[]*Event) {
+func playEvents(plays []play, nodes []TestNode, index map[cmn.HexBytes]cmn.HexBytes, orderedEvents *[]*Event) {
 	for _, p := range plays {
 		e := NewEvent(p.txPayload,
-			[]string{index[p.selfParent], index[p.otherParent]},
+			[]cmn.HexBytes{index[p.selfParent], index[p.otherParent]},
 			nodes[p.to].Key.PubKey(),
 			p.index)
 		nodes[p.to].signAndAddEvent(e, p.name, index, orderedEvents)
@@ -98,18 +83,8 @@ func playEvents(plays []play, nodes []TestNode, index map[string]string, ordered
 }
 
 func createHashgraph(db bool, orderedEvents *[]*Event, validatorSet *types.ValidatorSet, t testing.TB) *Hashgraph {
-	var store Store
-	if db {
-		var err error
-		store, err = NewBadgerStore(cacheSize, badgerDir)
-		if err != nil {
-			t.Fatal(err)
-		}
-	} else {
-		store = NewInmemStore(cacheSize)
-	}
 
-	hashgraph := NewHashgraph(store, DummyInternalCommitCallback, testLogger(t))
+	hashgraph := NewHashgraph(NewState(), DummyInternalCommitCallback, testLogger(t))
 
 	if err := hashgraph.Init(validatorSet); err != nil {
 		t.Fatalf("ERROR initializing Hashgraph: %s\n", err)
@@ -124,7 +99,7 @@ func createHashgraph(db bool, orderedEvents *[]*Event, validatorSet *types.Valid
 	return hashgraph
 }
 
-func initHashgraphFull(plays []play, db bool, n int, t testing.TB) (*Hashgraph, map[string]string, *[]*Event) {
+func initHashgraphFull(plays []play, db bool, n int, t testing.TB) (*Hashgraph, map[cmn.HexBytes]cmn.HexBytes, *[]*Event) {
 	nodes, index, orderedEvents, validatorSet := initHashgraphNodes(n)
 
 	playEvents(plays, nodes, index, orderedEvents)
@@ -133,7 +108,7 @@ func initHashgraphFull(plays []play, db bool, n int, t testing.TB) (*Hashgraph, 
 
 	return hashgraph, index, orderedEvents
 }
-
+*/
 /*  */
 
 /*
@@ -149,18 +124,18 @@ e01 |   |
 | \ |   |
 e0  e1  e2
 0   1   2
-*/
-func initHashgraph(t *testing.T) (*Hashgraph, map[string]string) {
+*/ /*
+func initHashgraph(t *testing.T) (*Hashgraph, map[cmn.HexBytes]cmn.HexBytes) {
 	plays := []play{
-		play{0, 0, "", "", "e0", nil, nil},
-		play{1, 0, "", "", "e1", nil, nil},
-		play{2, 0, "", "", "e2", nil, nil},
-		play{0, 1, "e0", "e1", "e01", nil, nil},
-		play{2, 1, "e2", "", "s20", nil, nil},
-		play{1, 1, "e1", "", "s10", nil, nil},
-		play{0, 2, "e01", "", "s00", nil, nil},
-		play{2, 2, "s20", "s00", "e20", nil, nil},
-		play{1, 2, "s10", "e20", "e12", nil, nil},
+		play{0, 0, []byte(""), []byte(""), []byte("e0"), nil},
+		play{1, 0, []byte(""), []byte(""), []byte("e1"), nil},
+		play{2, 0, []byte(""), []byte(""), []byte("e2"), nil},
+		play{0, 1, []byte("e0"), []byte("e1"), []byte("e01"), nil},
+		play{2, 1, []byte("e2"), []byte(""), []byte("s20"), nil},
+		play{1, 1, []byte("e1"), []byte(""), []byte("s10"), nil},
+		play{0, 2, []byte("e01"), []byte(""), []byte("s00"), nil},
+		play{2, 2, []byte("s20"), []byte("s00"), []byte("e20"), nil},
+		play{1, 2, []byte("s10"), []byte("e20"), []byte("e12"), nil},
 	}
 
 	h, index, _ := initHashgraphFull(plays, false, n, t)
@@ -173,39 +148,39 @@ func TestAncestor(t *testing.T) {
 
 	expected := []ancestryItem{
 		//first generation
-		ancestryItem{"e01", "e0", true, false},
-		ancestryItem{"e01", "e1", true, false},
-		ancestryItem{"s00", "e01", true, false},
-		ancestryItem{"s20", "e2", true, false},
-		ancestryItem{"e20", "s00", true, false},
-		ancestryItem{"e20", "s20", true, false},
-		ancestryItem{"e12", "e20", true, false},
-		ancestryItem{"e12", "s10", true, false},
+		ancestryItem{[]byte("e01"), []byte("e0"), true, false},
+		ancestryItem{[]byte("e01"), []byte("e1"), true, false},
+		ancestryItem{[]byte("s00"), []byte("e01"), true, false},
+		ancestryItem{[]byte("s20"), []byte("e2"), true, false},
+		ancestryItem{[]byte("e20"), []byte("s00"), true, false},
+		ancestryItem{[]byte("e20"), []byte("s20"), true, false},
+		ancestryItem{[]byte("e12"), []byte("e20"), true, false},
+		ancestryItem{[]byte("e12"), []byte("s10"), true, false},
 		//second generation
-		ancestryItem{"s00", "e0", true, false},
-		ancestryItem{"s00", "e1", true, false},
-		ancestryItem{"e20", "e01", true, false},
-		ancestryItem{"e20", "e2", true, false},
-		ancestryItem{"e12", "e1", true, false},
-		ancestryItem{"e12", "s20", true, false},
+		ancestryItem{[]byte("s00"), []byte("e0"), true, false},
+		ancestryItem{[]byte("s00"), []byte("e1"), true, false},
+		ancestryItem{[]byte("e20"), []byte("e01"), true, false},
+		ancestryItem{[]byte("e20"), []byte("e2"), true, false},
+		ancestryItem{[]byte("e12"), []byte("e1"), true, false},
+		ancestryItem{[]byte("e12"), []byte("s20"), true, false},
 		//third generation
-		ancestryItem{"e20", "e0", true, false},
-		ancestryItem{"e20", "e1", true, false},
-		ancestryItem{"e20", "e2", true, false},
-		ancestryItem{"e12", "e01", true, false},
-		ancestryItem{"e12", "e0", true, false},
-		ancestryItem{"e12", "e1", true, false},
-		ancestryItem{"e12", "e2", true, false},
+		ancestryItem{[]byte("e20"), []byte("e0"), true, false},
+		ancestryItem{[]byte("e20"), []byte("e1"), true, false},
+		ancestryItem{[]byte("e20"), []byte("e2"), true, false},
+		ancestryItem{[]byte("e12"), []byte("e01"), true, false},
+		ancestryItem{[]byte("e12"), []byte("e0"), true, false},
+		ancestryItem{[]byte("e12"), []byte("e1"), true, false},
+		ancestryItem{[]byte("e12"), []byte("e2"), true, false},
 		//false positive
-		ancestryItem{"e01", "e2", false, false},
-		ancestryItem{"s00", "e2", false, false},
-		ancestryItem{"e0", "", false, true},
-		ancestryItem{"s00", "", false, true},
-		ancestryItem{"e12", "", false, true},
+		ancestryItem{[]byte("e01"), []byte("e2"), false, false},
+		ancestryItem{[]byte("s00"), []byte("e2"), false, false},
+		ancestryItem{[]byte("e0"), []byte(""), false, true},
+		ancestryItem{[]byte("s00"), []byte(""), false, true},
+		ancestryItem{[]byte("e12"), []byte(""), false, true},
 	}
 
 	for _, exp := range expected {
-		a, err := h.ancestor(index[exp.descendant], index[exp.ancestor])
+		a, err := h.ancestor(index[exp.descendant].String(), index[exp.ancestor].String())
 		if err != nil && !exp.err {
 			t.Fatalf("Error computing ancestor(%s, %s). Err: %v", exp.descendant, exp.ancestor, err)
 		}
@@ -220,24 +195,24 @@ func TestSelfAncestor(t *testing.T) {
 
 	expected := []ancestryItem{
 		//1 generation
-		ancestryItem{"e01", "e0", true, false},
-		ancestryItem{"s00", "e01", true, false},
+		ancestryItem{[]byte("e01"), []byte("e0"), true, false},
+		ancestryItem{[]byte("s00"), []byte("e01"), true, false},
 		//1 generation false negative
-		ancestryItem{"e01", "e1", false, false},
-		ancestryItem{"e12", "e20", false, false},
-		ancestryItem{"s20", "e1", false, false},
-		ancestryItem{"s20", "", false, true},
+		ancestryItem{[]byte("e01"), []byte("e1"), false, false},
+		ancestryItem{[]byte("e12"), []byte("e20"), false, false},
+		ancestryItem{[]byte("s20"), []byte("e1"), false, false},
+		ancestryItem{[]byte("s20"), []byte(""), false, true},
 		//2 generations
-		ancestryItem{"e20", "e2", true, false},
-		ancestryItem{"e12", "e1", true, false},
+		ancestryItem{[]byte("e20"), []byte("e2"), true, false},
+		ancestryItem{[]byte("e12"), []byte("e1"), true, false},
 		//2 generations false negatives
-		ancestryItem{"e20", "e0", false, false},
-		ancestryItem{"e12", "e2", false, false},
-		ancestryItem{"e20", "e01", false, false},
+		ancestryItem{[]byte("e20"), []byte("e0"), false, false},
+		ancestryItem{[]byte("e12"), []byte("e2"), false, false},
+		ancestryItem{[]byte("e20"), []byte("e01"), false, false},
 	}
 
 	for _, exp := range expected {
-		a, err := h.selfAncestor(index[exp.descendant], index[exp.ancestor])
+		a, err := h.selfAncestor(index[exp.descendant].String(), index[exp.ancestor].String())
 		if err != nil && !exp.err {
 			t.Fatalf("Error computing selfAncestor(%s, %s). Err: %v", exp.descendant, exp.ancestor, err)
 		}
@@ -251,18 +226,18 @@ func TestSee(t *testing.T) {
 	h, index := initHashgraph(t)
 
 	expected := []ancestryItem{
-		ancestryItem{"e01", "e0", true, false},
-		ancestryItem{"e01", "e1", true, false},
-		ancestryItem{"e20", "e0", true, false},
-		ancestryItem{"e20", "e01", true, false},
-		ancestryItem{"e12", "e01", true, false},
-		ancestryItem{"e12", "e0", true, false},
-		ancestryItem{"e12", "e1", true, false},
-		ancestryItem{"e12", "s20", true, false},
+		ancestryItem{[]byte("e01"), []byte("e0"), true, false},
+		ancestryItem{[]byte("e01"), []byte("e1"), true, false},
+		ancestryItem{[]byte("e20"), []byte("e0"), true, false},
+		ancestryItem{[]byte("e20"), []byte("e01"), true, false},
+		ancestryItem{[]byte("e12"), []byte("e01"), true, false},
+		ancestryItem{[]byte("e12"), []byte("e0"), true, false},
+		ancestryItem{[]byte("e12"), []byte("e1"), true, false},
+		ancestryItem{[]byte("e12"), []byte("s20"), true, false},
 	}
 
 	for _, exp := range expected {
-		a, err := h.see(index[exp.descendant], index[exp.ancestor])
+		a, err := h.see(index[exp.descendant].String(), index[exp.ancestor].String())
 		if err != nil && !exp.err {
 			t.Fatalf("Error computing see(%s, %s). Err: %v", exp.descendant, exp.ancestor, err)
 		}
@@ -288,16 +263,16 @@ func TestLamportTimestamp(t *testing.T) {
 	}
 
 	for e, ets := range expectedTimestamps {
-		ts, err := h.lamportTimestamp(index[e])
+		ts, err := h.lamportTimestamp(index[[]byte(e)].String())
 		if err != nil {
 			t.Fatalf("Error computing lamportTimestamp(%s). Err: %s", e, err)
 		}
-		if ts != ets {
+		if ts != int64(ets) {
 			t.Fatalf("%s LamportTimestamp should be %d, not %d", e, ets, ts)
 		}
 	}
 }
-
+*/
 /*
 |    |    e20
 |    |   / |
@@ -314,59 +289,59 @@ e0   e1 (a)e2
 
 Node 2 Forks; events a and e2 are both created by node2, they are not self-parents
 and yet they are both ancestors of event e20
-*/
+*/ /*
 func TestFork(t *testing.T) {
-	index := make(map[string]string)
+	index := make(map[cmn.HexBytes]cmn.HexBytes)
 	nodes := []TestNode{}
 	pirs := []*types.Validator{}
 
 	for i := 0; i < n; i++ {
-		key, _ := bkeys.GenerateECDSAKey()
+		key := ed25519.GenPrivKey()
 		node := NewTestNode(key)
 		nodes = append(nodes, node)
-		pirs = append(pirs, types.NewValidator(node.PubHex, "", ""))
+		pirs = append(pirs, types.NewValidator(node.Key.PubKey(), 1))
 	}
 
 	validatorSet := types.NewValidatorSet(pirs)
 
-	hashgraph := NewHashgraph(NewInmemStore(cacheSize), DummyInternalCommitCallback, testLogger(t))
+	hashgraph := NewHashgraph(NewState(), DummyInternalCommitCallback, testLogger(t))
 
 	hashgraph.Init(validatorSet)
 
 	for i, node := range nodes {
-		event := NewEvent(nil, nil, nil, []string{"", ""}, node.PubBytes, 0)
+		event := NewEvent(nil, []cmn.HexBytes{[]byte(""), []byte("")}, node.Key.PubKey(), 0)
 		event.Sign(node.Key)
-		index[fmt.Sprintf("e%d", i)] = event.Hex()
+		index[[]byte(fmt.Sprintf("e%d", i))] = event.Hash()
 		hashgraph.InsertEvent(event, true)
 	}
 
 	//a and e2 need to have different hashes
-	eventA := NewEvent([][]byte{[]byte("yo")}, nil, nil, []string{"", ""}, nodes[2].PubBytes, 0)
+	eventA := NewEvent([]types.Tx{[]byte("test")}, []cmn.HexBytes{[]byte(""), []byte("")}, nodes[2].Key.PubKey(), 0)
 	eventA.Sign(nodes[2].Key)
-	index["a"] = eventA.Hex()
+	index[[]byte("a")] = eventA.Hash()
 	if err := hashgraph.InsertEvent(eventA, true); err == nil {
 		t.Fatal("InsertEvent should return error for 'a'")
 	}
 
-	event01 := NewEvent(nil, nil, nil,
-		[]string{index["e0"], index["a"]}, //e0 and a
-		nodes[0].PubBytes, 1)
+	event01 := NewEvent(nil,
+		[]cmn.HexBytes{index[[]byte("e0")], index[[]byte("a")]}, //e0 and a
+		nodes[0].Key.PubKey(), 1)
 	event01.Sign(nodes[0].Key)
-	index["e01"] = event01.Hex()
+	index[[]byte("e01")] = event01.Hash()
 	if err := hashgraph.InsertEvent(event01, true); err == nil {
 		t.Fatal("InsertEvent should return error for e01")
 	}
 
-	event20 := NewEvent(nil, nil, nil,
-		[]string{index["e2"], index["e01"]}, //e2 and e01
-		nodes[2].PubBytes, 1)
+	event20 := NewEvent(nil,
+		[]cmn.HexBytes{index[[]byte("e2")], index[[]byte("e01")]}, //e2 and e01
+		nodes[2].Key.PubKey(), 1)
 	event20.Sign(nodes[2].Key)
-	index["e20"] = event20.Hex()
+	index[[]byte("e20")] = event20.Hash()
 	if err := hashgraph.InsertEvent(event20, true); err == nil {
 		t.Fatal("InsertEvent should return error for e20")
 	}
 }
-
+*/
 /*
 |  s11  |
 |   |   |
@@ -385,7 +360,7 @@ s00 |  e21
 e0  e1  e2
 0   1    2
 */
-
+/*
 func initRoundHashgraph(t *testing.T) (*Hashgraph, map[string]string) {
 	plays := []play{
 		play{0, 0, "", "", "e0", nil, nil},
@@ -850,7 +825,7 @@ func contains(s []string, x string) bool {
 		}
 	}
 	return false
-}
+}*/
 
 /*
 
@@ -858,7 +833,7 @@ func contains(s []string, x string) bool {
 
 e0  e1  e2    Block (0, 1)
 0   1    2
-*/
+*/ /*
 func initBlockHashgraph(t *testing.T) (*Hashgraph, []TestNode, map[string]string) {
 	nodes, index, orderedEvents, validatorSet := initHashgraphNodes(n)
 
@@ -913,14 +888,6 @@ func TestInsertEventsWithBlockSignatures(t *testing.T) {
 
 	t.Run("Inserting Events with valid signatures", func(t *testing.T) {
 
-		/*
-			s00 |   |
-			|   |   |
-			|  e10  s20
-			| / |   |
-			e0  e1  e2
-			0   1    2
-		*/
 		plays := []play{
 			play{1, 1, "e1", "e0", "e10", nil, []BlockSignature{blockSigs[1]}},
 			play{2, 1, "e2", "", "s20", nil, []BlockSignature{blockSigs[2]}},
@@ -1029,7 +996,7 @@ func TestInsertEventsWithBlockSignatures(t *testing.T) {
 			t.Fatalf("Block 0 should contain 3 signatures, not %d", l)
 		}
 	})
-}
+}*/
 
 /*
                   Round 4
@@ -1089,7 +1056,7 @@ func TestInsertEventsWithBlockSignatures(t *testing.T) {
 	    | / |   |
 		e0  e1  e2
 		0   1    2
-*/
+*/ /*
 func initConsensusHashgraph(db bool, t testing.TB) (*Hashgraph, map[string]string) {
 	plays := []play{
 		play{0, 0, "", "", "e0", nil, nil},
@@ -1703,28 +1670,6 @@ func TestResetFromFrame(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	/*
-		The hashgraph should now look like this:
-
-		   	   f02b|   |
-		   	   |   |   |
-		   	   f02 |   |
-		   	   | \ |   |
-		   	   |   \   |
-		   	   |   | \ |
-		   +--f0x  |   f21 //f0x's other-parent is e21b; contained in R0
-		   |   |   | / |
-		   |   |  f10  |
-		   |   | / |   |
-		   |   f0  |   f2
-		   |   | \ | / |
-		   |   |  f1b  |
-		   |   |   |   |
-		   |   |   f1  |
-		   |   |   |   |
-		   +-- R0  R1  R2
-	*/
-
 	//Test Known
 	expectedKnown := map[uint32]int{
 		validatorSet.IDs()[0]: 5,
@@ -1738,10 +1683,6 @@ func TestResetFromFrame(t *testing.T) {
 			t.Fatalf("Known[%d] should be %d, not %d", validator.ID(), expectedKnown[validator.ID()], l)
 		}
 	}
-
-	/***************************************************************************
-	 Test StronglySee
-	***************************************************************************/
 	expected := []ancestryItem{
 		ancestryItem{"e02", "e0", true, false},
 		ancestryItem{"e02", "e1", true, false},
@@ -1762,10 +1703,6 @@ func TestResetFromFrame(t *testing.T) {
 			t.Fatalf("stronglySee(%s, %s) should be %v, not %v", exp.descendant, exp.ancestor, exp.val, a)
 		}
 	}
-
-	/***************************************************************************
-	 Test DivideRounds
-	***************************************************************************/
 
 	//check Event Rounds and LamportTimestamps
 	for _, ev := range frame.Events {
@@ -1822,9 +1759,6 @@ func TestResetFromFrame(t *testing.T) {
 		t.Fatalf("Reset Hg Round 1 witnesses should be %v, not %v", hwnames, h2wnames)
 	}
 
-	/***************************************************************************
-	Test Consensus
-	***************************************************************************/
 	if lbi := h2.Store.LastBlockIndex(); lbi != block.Index() {
 		t.Fatalf("LastBlockIndex should be %d, not %d", block.Index(), lbi)
 	}
@@ -1837,9 +1771,6 @@ func TestResetFromFrame(t *testing.T) {
 		t.Fatalf("AnchorBlock should be nil, not %v", v)
 	}
 
-	/***************************************************************************
-	Test continue after Reset
-	***************************************************************************/
 	//Insert remaining Events into the Reset hashgraph
 	for r := 2; r <= 4; r++ {
 		round, err := h.Store.GetRound(r)
@@ -1950,7 +1881,7 @@ func TestBootstrap(t *testing.T) {
 		t.Fatalf("Bootstrapped hashgraph's PendingLoadedEvents should be %#v, not %#v",
 			h.PendingLoadedEvents, nh.PendingLoadedEvents)
 	}
-}
+}*/
 
 /*
 
@@ -2009,7 +1940,7 @@ func TestBootstrap(t *testing.T) {
     |    |    | \  |
    w00  w01  w02  w03
 	0	 1	  2	   3
-*/
+*/ /*
 
 func initFunkyHashgraph(full bool, t testing.TB) (*Hashgraph, map[string]string) {
 	nodes, index, orderedEvents, participants := initHashgraphNodes(4)
@@ -2244,10 +2175,6 @@ func TestFunkyHashgraphReset(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		/***********************************************************************
-		Test continue after Reset
-		***********************************************************************/
-
 		//Compute diff
 		h2Known := h2.Store.KnownEvents()
 		diff := getDiff(h, h2Known, t)
@@ -2280,7 +2207,7 @@ func TestFunkyHashgraphReset(t *testing.T) {
 	}
 
 }
-
+*/
 /*
 
 
@@ -2344,6 +2271,7 @@ ATTENTION: Look at roots in Rounds 1 and 2
 	0	 1	  2	   3
 */
 
+/*
 func initSparseHashgraph(t testing.TB) (*Hashgraph, map[string]string) {
 	nodes, index, orderedEvents, participants := initHashgraphNodes(4)
 
@@ -2422,9 +2350,6 @@ func TestSparseHashgraphReset(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		/***********************************************************************
-		Test continue after Reset
-		***********************************************************************/
 
 		//Compute diff
 		h2Known := h2.Store.KnownEvents()
@@ -2466,7 +2391,6 @@ func TestSparseHashgraphReset(t *testing.T) {
 
 }
 
-/*----------------------------------------------------------------------------*/
 
 func compareRoundWitnesses(h, h2 *Hashgraph, index map[string]string, round int, check bool, t *testing.T) {
 
@@ -2545,4 +2469,4 @@ func disp(index map[string]string, events []string) string {
 
 func create(x int) *int {
 	return &x
-}
+}*/

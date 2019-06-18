@@ -13,8 +13,7 @@ import (
 	"time"
 
 	"github.com/andrecronje/babble-abci/hashgraph"
-	bnet "github.com/andrecronje/babble-abci/net"
-	"github.com/andrecronje/babble-abci/peers"
+	bnet "github.com/andrecronje/babble/src/net"
 	"github.com/andrecronje/babble/src/service"
 
 	_ "net/http/pprof"
@@ -25,6 +24,7 @@ import (
 	"github.com/rs/cors"
 
 	amino "github.com/tendermint/go-amino"
+	abci "github.com/tendermint/tendermint/abci/types"
 	bc "github.com/tendermint/tendermint/blockchain"
 	cfg "github.com/tendermint/tendermint/config"
 	cs "github.com/tendermint/tendermint/consensus"
@@ -63,7 +63,7 @@ type Node struct {
 	genesisDoc    *types.GenesisDoc   // initial validator set
 	privValidator types.PrivValidator // local node's validator key
 
-	Store   hashgraph.Store
+	State   hashgraph.State
 	Service *service.Service
 
 	transport   *p2p.MultiplexTransport
@@ -107,13 +107,19 @@ type Node struct {
 }
 
 // MetricsProvider returns a consensus, p2p and mempool Metrics.
-type MetricsProvider func(chainID string)
+type MetricsProvider func(chainID string) (*cs.Metrics, *p2p.Metrics, *mempl.Metrics, *sm.Metrics)
 
 // DefaultMetricsProvider returns Metrics build using Prometheus client library
 // if Prometheus is enabled. Otherwise, it returns no-op Metrics.
 func DefaultMetricsProvider(config *cfg.InstrumentationConfig) MetricsProvider {
-	return func(chainID string) {
-
+	return func(chainID string) (*cs.Metrics, *p2p.Metrics, *mempl.Metrics, *sm.Metrics) {
+		if config.Prometheus {
+			return cs.PrometheusMetrics(config.Namespace, "chain_id", chainID),
+				p2p.PrometheusMetrics(config.Namespace, "chain_id", chainID),
+				mempl.PrometheusMetrics(config.Namespace, "chain_id", chainID),
+				sm.PrometheusMetrics(config.Namespace, "chain_id", chainID)
+		}
+		return cs.NopMetrics(), p2p.NopMetrics(), mempl.NopMetrics(), sm.NopMetrics()
 	}
 }
 
@@ -175,7 +181,7 @@ func DefaultNewNode(config *cfg.Config, logger log.Logger) (*Node, error) {
 		)
 		oldPV.Upgrade(newPrivValKey, newPrivValState)
 	}
-
+	key := privval.LoadOrGenFilePV(newPrivValKey, newPrivValState)
 	return NewNode(config,
 		privval.LoadOrGenFilePV(newPrivValKey, newPrivValState),
 		nodeKey,
@@ -478,7 +484,7 @@ func NewNode(config *cfg.Config,
 	sw.SetLogger(p2pLogger)
 	sw.AddReactor("MEMPOOL", mempoolReactor)
 	sw.AddReactor("BLOCKCHAIN", bcReactor)
-	sw.AddReactor("CONSENSUS", consensusReactor)
+	//sw.AddReactor("CONSENSUS", consensusReactor)
 	sw.AddReactor("EVIDENCE", evidenceReactor)
 	sw.SetNodeInfo(nodeInfo)
 	sw.SetNodeKey(nodeKey)
@@ -548,7 +554,7 @@ func NewNode(config *cfg.Config,
 
 	logger.Debug("Creating BadgerStore", "path", dbpath)
 
-	dbStore, err := hashgraph.NewBadgerStore(config.Mempool.CacheSize, dbpath)
+	dbStore := hashgraph.NewState()
 	if err != nil {
 		return nil, err
 	}
@@ -570,12 +576,7 @@ func NewNode(config *cfg.Config,
 		eventBus:       eventBus,
 
 		logger:       logger,
-		core:         NewCore(validator, participants, genesisParticipants, dbStore, proxyApp.Consensus(), logger),
-		trans:        transport,
-		netCh:        transport.Consumer(),
-		proxy:        proxyApp.Consensus(),
-		sigintCh:     sigintCh,
-		shutdownCh:   make(chan struct{}),
+		core:         NewCore(privValidator, state.Validators, dbStore, proxyApp.Consensus(), config.ChainID(), logger),
 		controlTimer: NewRandomControlTimer(),
 	}
 	node.BaseService = *cmn.NewBaseService(logger, "Node", node)
@@ -693,14 +694,7 @@ Public Methods
 // start in (Babbling, CatchingUp, or Joining) based on the current
 // validator-set and the value of the fast-sync option.
 func (n *Node) Init() error {
-	_, ok := n.core.peers.ByID[n.core.validator.ID()]
-	if ok {
-		n.logger.Debug("Node belongs to PeerSet")
-		n.setBabblingOrCatchingUpState()
-	} else {
-		n.logger.Debug("Node does not belong to PeerSet => Joining")
-		n.setState(Joining)
-	}
+	n.setBabblingOrCatchingUpState()
 
 	return nil
 }
@@ -820,7 +814,6 @@ func (n *Node) GetStats() map[string]string {
 		"consensus_transactions": strconv.Itoa(n.core.GetConsensusTransactionsCount()),
 		"undetermined_events":    strconv.Itoa(len(n.core.GetUndeterminedEvents())),
 		"transaction_pool":       strconv.Itoa(len(n.core.transactionPool)),
-		"num_peers":              strconv.Itoa(n.core.peerSelector.Peers().Len()),
 		"sync_rate":              strconv.FormatFloat(n.syncRate(), 'f', 2, 64),
 		"events_per_second":      strconv.FormatFloat(consensusEventsPerSecond, 'f', 2, 64),
 		"rounds_per_second":      strconv.FormatFloat(consensusRoundsPerSecond, 'f', 2, 64),
@@ -835,16 +828,6 @@ func (n *Node) GetStats() map[string]string {
 // GetBlock returns a block
 func (n *Node) GetBlock(blockIndex int) (*hashgraph.Block, error) {
 	return n.core.hashgraph.Store.GetBlock(blockIndex)
-}
-
-// GetPeers returns the current peers
-func (n *Node) GetPeers() []*peers.Peer {
-	return n.core.peers.Peers
-}
-
-// GetGenesisPeers returns the genesis peers
-func (n *Node) GetGenesisPeers() []*peers.Peer {
-	return n.core.genesisPeers.Peers
 }
 
 /*******************************************************************************
@@ -945,8 +928,8 @@ func (n *Node) monologue() error {
 	return nil
 }
 
-// gossip performs a pull-push gossip operation with the selected peer.
-func (n *Node) gossip(peer *peers.Peer) error {
+// gossip performs a pull-push gossip operation with the selected validator.
+func (n *Node) gossip(validator *types.Validator) error {
 	//pull
 	otherKnownEvents, err := n.pull(peer)
 	if err != nil {
@@ -972,7 +955,7 @@ func (n *Node) gossip(peer *peers.Peer) error {
 }
 
 // pull performs a SyncRequest and processes the response.
-func (n *Node) pull(peer *peers.Peer) (otherKnownEvents map[uint32]int, err error) {
+func (n *Node) pull(validator *types.Validator) (otherKnownEvents map[uint32]int, err error) {
 	//Compute Known
 	n.coreLock.Lock()
 	knownEvents := n.core.KnownEvents()
@@ -1009,7 +992,7 @@ func (n *Node) pull(peer *peers.Peer) (otherKnownEvents map[uint32]int, err erro
 }
 
 // push preforms an EagerSyncRequest
-func (n *Node) push(peer *peers.Peer, knownEvents map[uint32]int) error {
+/*func (n *Node) push(peer *peers.Peer, knownEvents map[uint32]int) error {
 	// Compute Diff
 	start := time.Now()
 	n.coreLock.Lock()
@@ -1055,11 +1038,11 @@ func (n *Node) push(peer *peers.Peer, knownEvents map[uint32]int) error {
 	}
 
 	return nil
-}
+}*/
 
 // sync attempts to insert a list of events into the hashgraph, record a new
 // sync event, and process the signature pool.
-func (n *Node) sync(fromID uint32, events []hashgraph.WireEvent) error {
+/*func (n *Node) sync(fromID uint32, events []hashgraph.WireEvent) error {
 	//Insert Events in Hashgraph and create new Head if necessary
 	start := time.Now()
 	err := n.core.Sync(fromID, events)
@@ -1081,134 +1064,11 @@ func (n *Node) sync(fromID uint32, events []hashgraph.WireEvent) error {
 	}
 
 	return nil
-}
+}*/
 
 /*******************************************************************************
 CatchingUp
 *******************************************************************************/
-
-// fastForward enacts "CatchingUp"
-func (n *Node) fastForward() error {
-	n.logger.Debug("CATCHING-UP")
-
-	//wait until sync routines finish
-	n.waitRoutines()
-
-	var err error
-
-	// loop through all peers to check who is the most ahead, then fast-forward
-	// from them. If no-one is ready to fast-forward, transition to the Babbling
-	// state.
-	resp := n.getBestFastForwardResponse()
-	if resp == nil {
-		n.logger.Error("getBestFastForwardResponse returned nil => Babbling")
-		n.setState(Babbling)
-		return fmt.Errorf("getBestFastForwardResponse returned nil")
-	}
-
-	//update app from snapshot
-	/*err = n.proxy.Restore(resp.Snapshot)
-	if err != nil {
-		n.logger.WithError(err).Error("Restoring App from Snapshot")
-		return err
-	}*/
-
-	//prepare core. ie: fresh hashgraph
-	n.coreLock.Lock()
-	err = n.core.FastForward(&resp.Block, &resp.Frame)
-	n.coreLock.Unlock()
-	if err != nil {
-		n.logger.Error("Fast Forwarding Hashgraph", "err", err)
-		return err
-	}
-
-	err = n.core.ProcessAcceptedInternalTransactions(resp.Block.RoundReceived(), resp.Block.InternalTransactionReceipts())
-	if err != nil {
-		n.logger.Error("Processing AnchorBlock InternalTransactionReceipts", "err", err)
-	}
-
-	n.logger.Debug("FastForward OK")
-
-	n.setState(Babbling)
-
-	return nil
-}
-
-// getBestFastForwardResponse performs a FastForwardRequest with all known peers
-// and only selects the one corresponding to the hightest block number.
-func (n *Node) getBestFastForwardResponse() *bnet.FastForwardResponse {
-	var bestResponse *bnet.FastForwardResponse
-	maxBlock := 0
-
-	for _, p := range n.core.peerSelector.Peers().Peers {
-		start := time.Now()
-		resp, err := n.requestFastForward(p.NetAddr)
-		elapsed := time.Since(start)
-		n.logger.Debug("requestFastForward()", "duration", elapsed.Nanoseconds())
-		if err != nil {
-			n.logger.Error("requestFastForward()", "err", err)
-			continue
-		}
-
-		n.logger.Debug("FastForwardResponse",
-			"from_id", resp.FromID,
-			"block_index", resp.Block.Index(),
-			"block_round_received", resp.Block.RoundReceived(),
-			"frame_events", len(resp.Frame.Events),
-			"frame_roots", resp.Frame.Roots,
-			"frame_peers", len(resp.Frame.Peers),
-			"snapshot", resp.Snapshot,
-		)
-
-		if resp.Block.Index() > maxBlock {
-			bestResponse = &resp
-			maxBlock = resp.Block.Index()
-		}
-	}
-
-	return bestResponse
-}
-
-/*******************************************************************************
-Joining
-*******************************************************************************/
-
-// join attempts to add the node's validator public-key to the current
-// validator-set via an InternalTransaction which has to go through consensus.
-func (n *Node) join() error {
-	n.logger.Debug("JOINING")
-
-	peer := n.core.peerSelector.Next()
-
-	start := time.Now()
-	resp, err := n.requestJoin(peer.NetAddr)
-	elapsed := time.Since(start)
-	n.logger.Debug("requestJoin()", "duration", elapsed.Nanoseconds())
-
-	if err != nil {
-		n.logger.Error("Cannot join:", peer.NetAddr, err)
-		return err
-	}
-
-	n.logger.Debug("JoinResponse",
-		"from_id", resp.FromID,
-		"accepted", resp.Accepted,
-		"accepted_round", resp.AcceptedRound,
-		"peers", len(resp.Peers),
-	)
-
-	if resp.Accepted {
-		n.core.AcceptedRound = resp.AcceptedRound
-		n.setBabblingOrCatchingUpState()
-	} else {
-		// Then JoinRequest was explicitely refused by the curren peer-set. This
-		// is not an error.
-		n.logger.Debug("JoinRequest refused. Shutting down.")
-		n.Shutdown()
-	}
-
-	return nil
-}
 
 /*******************************************************************************
 Utils
@@ -1310,24 +1170,6 @@ func (n *Node) requestFastForward(target string) (bnet.FastForwardResponse, erro
 	var out bnet.FastForwardResponse
 
 	err := n.trans.FastForward(target, &args, &out)
-
-	return out, err
-}
-
-func (n *Node) requestJoin(target string) (bnet.JoinResponse, error) {
-
-	joinTx := hashgraph.NewInternalTransactionJoin(*peers.NewPeer(
-		n.core.validator.PublicKeyHex(),
-		n.trans.LocalAddr(),
-		n.core.validator.Moniker))
-
-	joinTx.Sign(n.core.validator.Key)
-
-	args := bnet.JoinRequest{InternalTransaction: joinTx}
-
-	var out bnet.JoinResponse
-
-	err := n.trans.Join(target, &args, &out)
 
 	return out, err
 }
@@ -1495,74 +1337,6 @@ func (n *Node) processFastForwardRequest(rpc bnet.RPC, cmd *bnet.FastForwardRequ
 		"events", len(resp.Frame.Events),
 		"block", resp.Block.Index(),
 		"round_received", resp.Block.RoundReceived(),
-		"rpc_err", respErr,
-	)
-
-	rpc.Respond(resp, respErr)
-}
-
-func (n *Node) processJoinRequest(rpc bnet.RPC, cmd *bnet.JoinRequest) {
-	n.logger.Debug("process JoinRequest",
-		"peer", cmd.InternalTransaction.Body.Peer,
-	)
-
-	var respErr error
-	var accepted bool
-	var acceptedRound int
-	var peers []*peers.Peer
-
-	if ok, _ := cmd.InternalTransaction.Verify(); !ok {
-
-		respErr = fmt.Errorf("Unable to verify signature on join request")
-
-		n.logger.Debug("Unable to verify signature on join request")
-
-	} else if _, ok := n.core.peers.ByPubKey[cmd.InternalTransaction.Body.Peer.PubKeyString()]; ok {
-
-		n.logger.Debug("JoinRequest peer is already present")
-
-		accepted = true
-
-		//Get current peerset and accepted round
-		lastConsensusRound := n.core.GetLastConsensusRoundIndex()
-		if lastConsensusRound != nil {
-			acceptedRound = *lastConsensusRound
-		}
-
-		peers = n.core.peers.Peers
-
-	} else {
-		//XXX run this by the App first
-		//Dispatch the InternalTransaction
-		n.coreLock.Lock()
-		promise := n.core.AddInternalTransaction(cmd.InternalTransaction)
-		n.coreLock.Unlock()
-
-		//Wait for the InternalTransaction to go through consensus
-		timeout := time.After(n.config.P2P.DialTimeout)
-		select {
-		case resp := <-promise.RespCh:
-			accepted = resp.Accepted
-			acceptedRound = resp.AcceptedRound
-			peers = resp.Peers
-		case <-timeout:
-			respErr = fmt.Errorf("Timeout waiting for JoinRequest to go through consensus")
-			n.logger.Error("err", respErr)
-			break
-		}
-	}
-
-	resp := &bnet.JoinResponse{
-		FromID:        n.core.validator.ID(),
-		Accepted:      accepted,
-		AcceptedRound: acceptedRound,
-		Peers:         peers,
-	}
-
-	n.logger.Debug("Responding to JoinRequest",
-		"accepted", resp.Accepted,
-		"accepted_round", resp.AcceptedRound,
-		"peers", len(resp.Peers),
 		"rpc_err", respErr,
 	)
 
