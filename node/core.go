@@ -90,8 +90,6 @@ Sync
 // expected to be in topoligical order.
 func (c *Core) Sync(from crypto.PubKey, unknownEvents []hashgraph.Event) error {
 	c.logger.Debug("Sync", "unknown_events", len(unknownEvents))
-
-	var otherHead *hashgraph.Event
 	for _, we := range unknownEvents {
 		if err := c.InsertEventAndRunConsensus(&we); err != nil {
 			c.logger.Error("Inserting Event", "err", err)
@@ -107,8 +105,6 @@ func (c *Core) Sync(from crypto.PubKey, unknownEvents []hashgraph.Event) error {
 	selfLastEvent := c.hashgraph.State.ValidatorEvents[c.validator.GetPubKey().Address().String()]
 	otherLastEvent := c.hashgraph.State.ValidatorEvents[from.Address().String()]
 	return c.AddSelfEvent(selfLastEvent[len(selfLastEvent)], otherLastEvent[len(otherLastEvent)])
-
-	return nil
 }
 
 // AddSelfEvent adds a self event
