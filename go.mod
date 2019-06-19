@@ -7,6 +7,8 @@ require (
 	github.com/cosmos/cosmos-sdk v0.35.0
 	github.com/dgraph-io/badger v1.5.4
 	github.com/dgryski/go-farm v0.0.0-20190423205320-6a90982ecee2 // indirect
+	github.com/fortytw2/leaktest v1.3.0
+	github.com/go-kit/kit v0.8.0
 	github.com/gogo/protobuf v1.2.1 // indirect
 	github.com/hashicorp/golang-lru v0.5.1 // indirect
 	github.com/pkg/errors v0.8.1

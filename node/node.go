@@ -400,6 +400,12 @@ func NewNode(config *cfg.Config,
 	if privValidator != nil {
 		consensusState.SetPrivValidator(privValidator)
 	}
+	//consensusReactor := cs.NewConsensusReactor(consensusState, fastSync, cs.ReactorMetrics(csMetrics))
+	//consensusReactor.SetLogger(consensusLogger)
+
+	// services which will be publishing and/or subscribing for messages (events)
+	// consensusReactor will set it on consensusState and blockExecutor
+	//consensusReactor.SetEventBus(eventBus)
 
 	p2pLogger := logger.With("module", "p2p")
 	nodeInfo, err := makeNodeInfo(
@@ -533,7 +539,6 @@ func NewNode(config *cfg.Config,
 		}()
 	}
 
-	dbStore := hashgraph.NewState()
 	if err != nil {
 		return nil, err
 	}
@@ -555,7 +560,7 @@ func NewNode(config *cfg.Config,
 		eventBus:       eventBus,
 
 		logger:       logger,
-		core:         NewCore(privValidator, state.Validators, dbStore, proxyApp.Consensus(), config.ChainID(), logger),
+		core:         NewCore(privValidator, state.Validators, hashgraph.NewState(), proxyApp.Consensus(), config.ChainID(), logger),
 		controlTimer: NewRandomControlTimer(),
 	}
 	node.BaseService = *cmn.NewBaseService(logger, "Node", node)
