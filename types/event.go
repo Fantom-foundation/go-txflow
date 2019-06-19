@@ -1,4 +1,4 @@
-package hashgraph
+package types
 
 import (
 	"github.com/andrecronje/babble/src/common"

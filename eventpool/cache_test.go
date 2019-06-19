@@ -13,7 +13,7 @@ import (
 )
 
 func TestCacheRemove(t *testing.T) {
-	cache := newMapTxCache(100)
+	cache := newMapEventsCache(100)
 	numTxs := 10
 	txs := make([][]byte, numTxs)
 	for i := 0; i < numTxs; i++ {
@@ -37,7 +37,7 @@ func TestCacheRemove(t *testing.T) {
 func TestCacheAfterUpdate(t *testing.T) {
 	app := kvstore.NewKVStoreApplication()
 	cc := proxy.NewLocalClientCreator(app)
-	mempool, cleanup := newMempoolWithApp(cc)
+	mempool, cleanup := newEventpoolWithApp(cc)
 	defer cleanup()
 
 	// reAddIndices & txsInCache can have elements > numTxsToCreate
@@ -56,8 +56,8 @@ func TestCacheAfterUpdate(t *testing.T) {
 	}
 	for tcIndex, tc := range tests {
 		for i := 0; i < tc.numTxsToCreate; i++ {
-			tx := types.Tx{byte(i)}
-			err := mempool.CheckTx(tx, nil)
+			event := types.Event{byte(i)}
+			err := eventpool.CheckEvent(event, nil)
 			require.NoError(t, err)
 		}
 

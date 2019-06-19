@@ -10,7 +10,7 @@ import (
 const (
 	// MetricsSubsystem is a subsystem shared by all metrics exposed by this
 	// package.
-	MetricsSubsystem = "mempool"
+	MetricsSubsystem = "eventpool"
 )
 
 // Metrics contains metrics exposed by this package.
@@ -19,10 +19,10 @@ type Metrics struct {
 	// Size of the mempool.
 	Size metrics.Gauge
 	// Histogram of transaction sizes, in bytes.
-	TxSizeBytes metrics.Histogram
+	EventSizeBytes metrics.Histogram
 	// Number of failed transactions.
-	FailedTxs metrics.Counter
-	// Number of times transactions are rechecked in the mempool.
+	FailedEvents metrics.Counter
+	// Number of times transactions are rechecked in the eventpool.
 	RecheckTimes metrics.Counter
 }
 
@@ -41,14 +41,14 @@ func PrometheusMetrics(namespace string, labelsAndValues ...string) *Metrics {
 			Name:      "size",
 			Help:      "Size of the mempool (number of uncommitted transactions).",
 		}, labels).With(labelsAndValues...),
-		TxSizeBytes: prometheus.NewHistogramFrom(stdprometheus.HistogramOpts{
+		EventSizeBytes: prometheus.NewHistogramFrom(stdprometheus.HistogramOpts{
 			Namespace: namespace,
 			Subsystem: MetricsSubsystem,
 			Name:      "tx_size_bytes",
 			Help:      "Transaction sizes in bytes.",
 			Buckets:   stdprometheus.ExponentialBuckets(1, 3, 17),
 		}, labels).With(labelsAndValues...),
-		FailedTxs: prometheus.NewCounterFrom(stdprometheus.CounterOpts{
+		FailedEvents: prometheus.NewCounterFrom(stdprometheus.CounterOpts{
 			Namespace: namespace,
 			Subsystem: MetricsSubsystem,
 			Name:      "failed_txs",
@@ -66,9 +66,9 @@ func PrometheusMetrics(namespace string, labelsAndValues ...string) *Metrics {
 // NopMetrics returns no-op Metrics.
 func NopMetrics() *Metrics {
 	return &Metrics{
-		Size:         discard.NewGauge(),
-		TxSizeBytes:  discard.NewHistogram(),
-		FailedTxs:    discard.NewCounter(),
-		RecheckTimes: discard.NewCounter(),
+		Size:           discard.NewGauge(),
+		EventSizeBytes: discard.NewHistogram(),
+		FailedEvents:   discard.NewCounter(),
+		RecheckTimes:   discard.NewCounter(),
 	}
 }

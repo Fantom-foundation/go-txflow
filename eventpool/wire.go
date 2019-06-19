@@ -7,5 +7,5 @@ import (
 var cdc = amino.NewCodec()
 
 func init() {
-	RegisterMempoolMessages(cdc)
+	RegisterEventpoolMessages(cdc)
 }
