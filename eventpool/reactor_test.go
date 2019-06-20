@@ -19,6 +19,7 @@ import (
 	"github.com/tendermint/tendermint/p2p"
 	"github.com/tendermint/tendermint/p2p/mock"
 	"github.com/tendermint/tendermint/proxy"
+	ttypes "github.com/tendermint/tendermint/types"
 )
 
 type peerState struct {
@@ -124,7 +125,7 @@ func TestReactorBroadcastEventMessage(t *testing.T) {
 	}()
 	for _, r := range reactors {
 		for _, peer := range r.Switch.Peers().List() {
-			peer.Set(types.PeerStateKey, peerState{1})
+			peer.Set(ttypes.PeerStateKey, peerState{1})
 		}
 	}
 

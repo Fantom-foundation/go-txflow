@@ -1,9 +1,7 @@
 package mempool
 
 import (
-	"crypto/rand"
 	"crypto/sha256"
-	"encoding/binary"
 	"fmt"
 	"io/ioutil"
 	mrand "math/rand"
@@ -43,7 +41,7 @@ func newEventpoolWithAppAndConfig(cc proxy.ClientCreator, config *cfg.Config) (*
 	if err != nil {
 		panic(err)
 	}
-	eventpool := NewEventpool(config.Mempool, appConnMem, 0)
+	eventpool := NewEventpool(config.Mempool, 0)
 	eventpool.SetLogger(log.TestingLogger())
 	return eventpool, func() { os.RemoveAll(config.RootDir) }
 }
@@ -70,13 +68,9 @@ func checkEvents(t *testing.T, eventpool *Eventpool, count int, peerID uint16) [
 	events := make([]types.Event, count)
 	eventInfo := EventInfo{PeerID: peerID}
 	for i := 0; i < count; i++ {
-		eventBytes := make([]byte, 20)
-		events[i] = eventBytes
-		_, err := rand.Read(eventBytes)
-		if err != nil {
-			t.Error(err)
-		}
-		if err := eventpool.CheckEventWithInfo(eventBytes, nil, eventInfo); err != nil {
+		events[i] = types.Event{}
+		events[i].Height = int64(i)
+		if err := eventpool.CheckEventWithInfo(events[i], nil, eventInfo); err != nil {
 			// Skip invalid events.
 			// TestEventpoolFilters will fail otherwise. It asserts a number of events
 			// returned.
@@ -94,8 +88,10 @@ func TestEventpoolUpdateAddsEventsToCache(t *testing.T) {
 	cc := proxy.NewLocalClientCreator(app)
 	eventpool, cleanup := newEventpoolWithApp(cc)
 	defer cleanup()
-	eventpool.Update(1, []types.Event{[]byte{0x01}}, nil, nil)
-	err := eventpool.CheckEvent([]byte{0x01}, nil)
+	event := types.Event{}
+	event.Height = 1
+	eventpool.Update(1, []types.Event{event})
+	err := eventpool.CheckEvent(event, nil)
 	if assert.Error(t, err) {
 		assert.Equal(t, ErrEventInCache, err)
 	}
@@ -122,7 +118,7 @@ func TestEventsAvailable(t *testing.T) {
 	// it should fire once now for the new height
 	// since there are still events left
 	committedEvents, events := events[:50], events[50:]
-	if err := eventpool.Update(1, committedEvents, nil, nil); err != nil {
+	if err := eventpool.Update(1, committedEvents); err != nil {
 		t.Error(err)
 	}
 	ensureFire(t, eventpool.EventsAvailable(), timeoutMS)
@@ -134,7 +130,7 @@ func TestEventsAvailable(t *testing.T) {
 
 	// now call update with all the events. it should not fire as there are no events left
 	committedEvents = append(events, moreEvents...)
-	if err := eventpool.Update(2, committedEvents, nil, nil); err != nil {
+	if err := eventpool.Update(2, committedEvents); err != nil {
 		t.Error(err)
 	}
 	ensureNoFire(t, eventpool.EventsAvailable(), timeoutMS)
@@ -150,7 +146,7 @@ func TestSerialReap(t *testing.T) {
 	app.SetOption(abci.RequestSetOption{Key: "serial", Value: "on"})
 	cc := proxy.NewLocalClientCreator(app)
 
-	mempool, cleanup := newEventpoolWithApp(cc)
+	eventpool, cleanup := newEventpoolWithApp(cc)
 	defer cleanup()
 
 	appConnCon, _ := cc.NewABCIClient()
@@ -164,19 +160,19 @@ func TestSerialReap(t *testing.T) {
 		for i := start; i < end; i++ {
 
 			// This will succeed
-			eventBytes := make([]byte, 8)
-			binary.BigEndian.PutUint64(eventBytes, uint64(i))
-			err := eventpool.CheckEvents(eventBytes, nil)
-			_, cached := cacheMap[string(eventBytes)]
+			event := types.Event{}
+			event.Height = int64(i)
+			err := eventpool.CheckEvent(event, nil)
+			_, cached := cacheMap[event.Hex()]
 			if cached {
 				require.NotNil(t, err, "expected error for cached event")
 			} else {
 				require.Nil(t, err, "expected no err for uncached event")
 			}
-			cacheMap[string(eventBytes)] = struct{}{}
+			cacheMap[event.Hex()] = struct{}{}
 
 			// Duplicates are cached and should return error
-			err = eventpool.CheckEvent(eventBytes, nil)
+			err = eventpool.CheckEvent(event, nil)
 			require.NotNil(t, err, "Expected error after CheckEvent on duplicated event")
 		}
 	}
@@ -184,11 +180,10 @@ func TestSerialReap(t *testing.T) {
 	updateRange := func(start, end int) {
 		events := make([]types.Event, 0)
 		for i := start; i < end; i++ {
-			eventBytes := make([]byte, 8)
-			binary.BigEndian.PutUint64(eventBytes, uint64(i))
-			events = append(events, eventBytes)
+			events[i] = types.Event{}
+			events[i].Height = int64(i)
 		}
-		if err := eventpool.Update(0, events, nil, nil); err != nil {
+		if err := eventpool.Update(0, events); err != nil {
 			t.Error(err)
 		}
 	}
@@ -196,59 +191,26 @@ func TestSerialReap(t *testing.T) {
 	commitRange := func(start, end int) {
 		// Deliver some events.
 		for i := start; i < end; i++ {
-			eventBytes := make([]byte, 8)
-			binary.BigEndian.PutUint64(eventBytes, uint64(i))
-			res, err := appConnCon.DeliverEventSync(eventBytes)
-			if err != nil {
-				t.Errorf("Client error committing event: %v", err)
-			}
-			if res.IsErr() {
-				t.Errorf("Error committing event. Code:%v result:%X log:%v",
-					res.Code, res.Data, res.Log)
-			}
-		}
-		res, err := appConnCon.CommitSync()
-		if err != nil {
-			t.Errorf("Client error committing: %v", err)
-		}
-		if len(res.Data) != 8 {
-			t.Errorf("Error committing. Hash:%X", res.Data)
+			event := types.Event{}
+			event.Height = int64(i)
 		}
 	}
 
 	//----------------------------------------
 
 	// Deliver some events.
-	delivereventsRange(0, 100)
-
-	// Reap the events.
-	reapCheck(100)
-
-	// Reap again.  We should get the same amount
-	reapCheck(100)
+	deliverEventsRange(0, 100)
 
 	// Deliver 0 to 999, we should reap 900 new events
 	// because 100 were already counted.
-	deliverTxsRange(0, 1000)
-
-	// Reap the events.
-	reapCheck(1000)
-
-	// Reap again.  We should get the same amount
-	reapCheck(1000)
+	deliverEventsRange(0, 1000)
 
 	// Commit from the conensus AppConn
 	commitRange(0, 500)
 	updateRange(0, 500)
 
-	// We should have 500 left.
-	reapCheck(500)
-
 	// Deliver 100 invalid events and 100 valid events
 	deliverEventsRange(900, 1100)
-
-	// We should have 600 now.
-	reapCheck(600)
 }
 
 func TestEventpoolCloseWAL(t *testing.T) {
@@ -263,13 +225,10 @@ func TestEventpoolCloseWAL(t *testing.T) {
 	require.Equal(t, 0, len(m1), "no matches yet")
 
 	// 3. Create the eventpool
-	wcfg := cfg.DefaultEventpoolConfig()
+	wcfg := cfg.DefaultMempoolConfig()
 	wcfg.RootDir = rootDir
 	defer os.RemoveAll(wcfg.RootDir)
-	app := kvstore.NewKVStoreApplication()
-	cc := proxy.NewLocalClientCreator(app)
-	appConnMem, _ := cc.NewABCIClient()
-	eventpool := NewEventpool(wcfg, appConnMem, 10)
+	eventpool := NewEventpool(wcfg, 10)
 	eventpool.InitWAL()
 
 	// 4. Ensure that the directory contains the WAL file
@@ -278,7 +237,9 @@ func TestEventpoolCloseWAL(t *testing.T) {
 	require.Equal(t, 1, len(m2), "expecting the wal match in")
 
 	// 5. Write some contents to the WAL
-	eventpool.CheckEvent(types.Event([]byte("foo")), nil)
+	event := types.Event{}
+	event.Height = 1
+	eventpool.CheckEvent(event, nil)
 	walFilepath := eventpool.wal.Path
 	sum1 := checksumFile(walFilepath, t)
 
@@ -288,7 +249,8 @@ func TestEventpoolCloseWAL(t *testing.T) {
 	// 7. Invoke CloseWAL() and ensure it discards the
 	// WAL thus any other write won't go through.
 	eventpool.CloseWAL()
-	eventpool.CheckEvent(types.Event([]byte("bar")), nil)
+	event.Height = 2
+	eventpool.CheckEvent(event, nil)
 	sum2 := checksumFile(walFilepath, t)
 	require.Equal(t, sum1, sum2, "expected no change to the WAL after invoking CloseWAL() since it was discarded")
 
@@ -302,7 +264,7 @@ func TestEventpoolCloseWAL(t *testing.T) {
 // encoded byte array, plus 1 for the struct field, plus 4
 // for the amino prefix.
 func eventMessageSize(event types.Event) int {
-	return amino.ByteSliceSize(event) + 1 + 4
+	return amino.ByteSliceSize(event.Bytes()) + 1 + 4
 }
 
 func TestEventpoolMaxMsgSize(t *testing.T) {
@@ -337,8 +299,9 @@ func TestEventpoolMaxMsgSize(t *testing.T) {
 	for i, testCase := range testCases {
 		caseString := fmt.Sprintf("case %d, len %d", i, testCase.len)
 
-		event := cmn.RandBytes(testCase.len)
-		err := mempl.CheckEvent(event, nil)
+		event := types.Event{}
+		event.Transactions[0] = cmn.RandBytes(testCase.len)
+		err := eventpool.CheckEvent(event, nil)
 		msg := &EventMessage{event}
 		encoded := cdc.MustMarshalBinaryBare(msg)
 		require.Equal(t, len(encoded), eventMessageSize(event), caseString)
@@ -363,31 +326,29 @@ func TestEventpoolEventsBytes(t *testing.T) {
 
 	// 1. zero by default
 	assert.EqualValues(t, 0, eventpool.EventsBytes())
-
 	// 2. len(event) after CheckEvent
-	err := eventpool.CheckEvent([]byte{0x01}, nil)
+	event := types.Event{}
+	event.Height = 1
+	err := eventpool.CheckEvent(event, nil)
 	require.NoError(t, err)
 	assert.EqualValues(t, 1, eventpool.EventsBytes())
 
 	// 3. zero again after event is removed by Update
-	eventpool.Update(1, []types.Event{[]byte{0x01}}, nil, nil)
+	eventpool.Update(1, []types.Event{event})
 	assert.EqualValues(t, 0, eventpool.EventsBytes())
 
-	// 4. zero after Flush
-	err = eventpool.CheckEvent([]byte{0x02, 0x03}, nil)
+	// 4. zero after Flush\
+	events := []types.Event{}
+	events[0] = types.Event{}
+	events[0].Height = 2
+	events[1] = types.Event{}
+	events[1].Height = 3
+	err = eventpool.CheckEvent(events[0], nil)
 	require.NoError(t, err)
 	assert.EqualValues(t, 2, eventpool.EventsBytes())
 
 	eventpool.Flush()
 	assert.EqualValues(t, 0, eventpool.EventsBytes())
-
-	// 5. ErrEventpoolIsFull is returned when/if MaxEventsBytes limit is reached.
-	err = eventpool.CheckEvent([]byte{0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04}, nil)
-	require.NoError(t, err)
-	err = eventpool.CheckEvent([]byte{0x05}, nil)
-	if assert.Error(t, err) {
-		assert.IsType(t, ErrEventpoolIsFull{}, err)
-	}
 
 	// 6. zero after event is rechecked and removed due to not being valid anymore
 	app2 := counter.NewCounterApplication(true)
@@ -395,27 +356,12 @@ func TestEventpoolEventsBytes(t *testing.T) {
 	eventpool, cleanup = newEventpoolWithApp(cc)
 	defer cleanup()
 
-	eventBytes := make([]byte, 8)
-	binary.BigEndian.PutUint64(eventBytes, uint64(0))
-
-	err = eventpool.CheckEvent(eventBytes, nil)
+	err = eventpool.CheckEvent(event, nil)
 	require.NoError(t, err)
 	assert.EqualValues(t, 8, eventpool.EventsBytes())
 
-	appConnCon, _ := cc.NewABCIClient()
-	appConnCon.SetLogger(log.TestingLogger().With("module", "abci-client", "connection", "consensus"))
-	err = appConnCon.Start()
-	require.Nil(t, err)
-	defer appConnCon.Stop()
-	res, err := appConnCon.DeliverTxSync(txBytes)
-	require.NoError(t, err)
-	require.EqualValues(t, 0, res.Code)
-	res2, err := appConnCon.CommitSync()
-	require.NoError(t, err)
-	require.NotEmpty(t, res2.Data)
-
 	// Pretend like we committed nothing so eventBytes gets rechecked and removed.
-	eventpool.Update(1, []types.Event{}, nil, nil)
+	eventpool.Update(1, []types.Event{})
 	assert.EqualValues(t, 0, eventpool.EventsBytes())
 }
 
@@ -437,7 +383,7 @@ func TestEventpoolRemoteAppConcurrency(t *testing.T) {
 	eventLen := 200
 	events := make([]types.Event, nEvents)
 	for i := 0; i < nEvents; i++ {
-		events[i] = cmn.RandBytes(eventLen)
+		events[i].Transactions[0] = cmn.RandBytes(eventLen)
 	}
 
 	// simulate a group of peers sending them over and over
@@ -451,8 +397,6 @@ func TestEventpoolRemoteAppConcurrency(t *testing.T) {
 		// this will err with ErrEventInCache many times ...
 		eventpool.CheckEventWithInfo(event, nil, EventInfo{PeerID: uint16(peerID)})
 	}
-	err := eventpool.FlushAppConn()
-	require.NoError(t, err)
 }
 
 // caller must close server

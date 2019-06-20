@@ -106,7 +106,7 @@ func newEventpoolIDs() *eventpoolIDs {
 }
 
 // NewMEventpoolReactor returns a new MempoolReactor with the given config and mempool.
-func NewMEventpoolReactor(config *cfg.MempoolConfig, eventpool *Eventpool) *EventpoolReactor {
+func NewEventpoolReactor(config *cfg.MempoolConfig, eventpool *Eventpool) *EventpoolReactor {
 	epR := &EventpoolReactor{
 		config:    config,
 		Eventpool: eventpool,

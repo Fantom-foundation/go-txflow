@@ -261,20 +261,19 @@ func (ep *Eventpool) CheckEventWithInfo(event types.Event, cb func(*abci.Respons
 		eventsBytes = ep.EventsBytes()
 	)
 	//TODO: Check Size
-	/*if memSize >= ep.config.Size ||
-		int64(len(event))+eventsBytes > ep.config.MaxEventsBytes {
+	if memSize >= ep.config.Size ||
+		int64(len(event.Bytes()))+eventsBytes > ep.config.MaxTxsBytes {
 		return ErrMempoolIsFull{
 			memSize, ep.config.Size,
-			eventsBytes, ep.config.MaxEventsBytes}
-	}*/
+			eventsBytes, ep.config.MaxTxsBytes}
+	}
 
 	// The size of the corresponding amino-encoded EventMessage
 	// can't be larger than the maxMsgSize, otherwise we can't
 	// relay it to peers.
-	//TODO: event.Size()
-	/*if len(event) > maxEventSize {
+	if len(event.Bytes()) > maxEventSize {
 		return ErrEventTooLarge
-	}*/
+	}
 
 	// CACHE
 	if !ep.cache.Push(event) {
@@ -332,8 +331,8 @@ func (ep *Eventpool) CheckEventWithInfo(event types.Event, cb func(*abci.Respons
 func (ep *Eventpool) addEvent(epE *eventpoolEvent) {
 	e := ep.events.PushBack(epE)
 	ep.eventsMap.Store(eventKey(epE.event), e)
-	atomic.AddInt64(&ep.eventsBytes, int64(len(epE.event)))
-	ep.metrics.EventSizeBytes.Observe(float64(len(epE.event)))
+	atomic.AddInt64(&ep.eventsBytes, int64(len(epE.event.Bytes())))
+	ep.metrics.EventSizeBytes.Observe(float64(len(epE.event.Bytes())))
 }
 
 // Called from:
@@ -343,7 +342,7 @@ func (ep *Eventpool) removeEvent(event types.Event, elem *clist.CElement, remove
 	ep.events.Remove(elem)
 	elem.DetachPrev()
 	ep.eventsMap.Delete(eventKey(event))
-	atomic.AddInt64(&ep.eventsBytes, int64(-len(event)))
+	atomic.AddInt64(&ep.eventsBytes, int64(-len(event.Bytes())))
 
 	if removeFromCache {
 		ep.cache.Remove(event)

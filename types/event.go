@@ -1,6 +1,8 @@
 package types
 
 import (
+	"fmt"
+
 	"github.com/andrecronje/babble/src/common"
 	"github.com/tendermint/tendermint/crypto"
 	"github.com/tendermint/tendermint/crypto/merkle"
@@ -75,6 +77,10 @@ func NewEvent(txs types.Txs,
 func (e *Event) SelfParent() string {
 	//Dangerous assumption
 	return e.Parents[0].String()
+}
+
+func (e *Event) Bytes() []byte {
+	return []byte(fmt.Sprintf("%v", e))
 }
 
 func (e *Event) GetVote() *types.Vote {
