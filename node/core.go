@@ -4,18 +4,19 @@ import (
 	"sort"
 
 	"github.com/andrecronje/babble-abci/hashgraph"
+	"github.com/andrecronje/babble-abci/types"
 	"github.com/tendermint/tendermint/crypto"
 	cmn "github.com/tendermint/tendermint/libs/common"
 	"github.com/tendermint/tendermint/libs/log"
 	"github.com/tendermint/tendermint/proxy"
-	"github.com/tendermint/tendermint/types"
+	ttypes "github.com/tendermint/tendermint/types"
 )
 
 //Core is the core Node object
 type Core struct {
 
 	// validator is a wrapper around the private-key controlling this node.
-	validator types.PrivValidator
+	validator ttypes.PrivValidator
 
 	// hg is the underlying hashgraph where all the consensus computation and
 	// data reside.
@@ -23,7 +24,7 @@ type Core struct {
 
 	// validators reflects the latest validator-set used in the hashgraph
 	// consensus methods.
-	validators *types.ValidatorSet
+	validators *ttypes.ValidatorSet
 
 	// Hash and Index of this instance's head Event
 	Head    string
@@ -32,7 +33,7 @@ type Core struct {
 
 	// The transaction pool contains transactions submitted from the app that
 	// still haven't made it into the hashgraph.
-	transactionPool types.Txs
+	transactionPool ttypes.Txs
 
 	// proxyCommitCallback is called by the hashgraph when a block is committed
 	proxyCommitCallback proxy.AppConnConsensus
@@ -42,8 +43,8 @@ type Core struct {
 
 // NewCore is a factory method that returns a new Core object
 func NewCore(
-	validator types.PrivValidator,
-	validators *types.ValidatorSet,
+	validator ttypes.PrivValidator,
+	validators *ttypes.ValidatorSet,
 	state *hashgraph.State,
 	proxyCommitCallback proxy.AppConnConsensus,
 	chainID string,
@@ -53,7 +54,7 @@ func NewCore(
 		validator:           validator,
 		proxyCommitCallback: proxyCommitCallback,
 		validators:          validators,
-		transactionPool:     types.Txs{},
+		transactionPool:     ttypes.Txs{},
 		logger:              logger,
 		ChainID:             chainID,
 		Head:                "",
@@ -68,7 +69,7 @@ func NewCore(
 }
 
 // SetValidators sets the Validators property
-func (c *Core) SetValidators(vs *types.ValidatorSet) {
+func (c *Core) SetValidators(vs *ttypes.ValidatorSet) {
 	c.validators = vs
 }
 
@@ -88,7 +89,7 @@ Sync
 
 // Sync decodes and inserts new Events into the Hashgraph. UnknownEvents are
 // expected to be in topoligical order.
-func (c *Core) Sync(from crypto.PubKey, unknownEvents []hashgraph.Event) error {
+func (c *Core) Sync(from crypto.PubKey, unknownEvents []types.Event) error {
 	c.logger.Debug("Sync", "unknown_events", len(unknownEvents))
 	for _, we := range unknownEvents {
 		if err := c.InsertEventAndRunConsensus(&we); err != nil {
@@ -108,12 +109,12 @@ func (c *Core) Sync(from crypto.PubKey, unknownEvents []hashgraph.Event) error {
 }
 
 // AddSelfEvent adds a self event
-func (c *Core) AddSelfEvent(selfEvent *hashgraph.Event, otherEvent *hashgraph.Event) error {
+func (c *Core) AddSelfEvent(selfEvent *types.Event, otherEvent *types.Event) error {
 	txs := len(c.transactionPool)
 
 	//create new event with self head and otherHead, and empty pools in its
 	//payload
-	newHeadEvent := hashgraph.NewEvent(c.transactionPool,
+	newHeadEvent := types.NewEvent(c.transactionPool,
 		[]cmn.HexBytes{selfEvent.Hash(), otherEvent.Hash()},
 		c.validator.GetPubKey(),
 		int64(c.Height+1))
@@ -136,20 +137,20 @@ func (c *Core) AddSelfEvent(selfEvent *hashgraph.Event, otherEvent *hashgraph.Ev
 	return nil
 }
 
-func NewVoteFromEvent(event *hashgraph.Event) {
+func NewVoteFromEvent(event *types.Event) {
 
 }
 
 // SignAndInsertSelfEvent signs a Hashgraph Event, inserts it and runs consensus
-func (c *Core) SignAndInsertSelfEvent(event *hashgraph.Event) error {
-	vote := event.GetVote()
-
-	c.validator.SignVote(c.ChainID, vote)
+func (c *Core) SignAndInsertSelfEvent(event *types.Event) error {
+	//vote := event.GetVote()
+	//TODO: Sign event somehow
+	//c.validator.SignVote(c.ChainID, vote)
 	return c.InsertEventAndRunConsensus(event)
 }
 
 // InsertEventAndRunConsensus Inserts a hashgraph event and runs consensus
-func (c *Core) InsertEventAndRunConsensus(event *hashgraph.Event) error {
+func (c *Core) InsertEventAndRunConsensus(event *types.Event) error {
 	if err := c.hashgraph.InsertEventAndRunConsensus(event); err != nil {
 		return err
 	}
@@ -170,7 +171,7 @@ Commit
 *******************************************************************************/
 
 // Commit the Block to the App using the proxyCommitCallback
-func (c *Core) Commit(block *types.Block) error {
+func (c *Core) Commit(block *ttypes.Block) error {
 	//Commit the Block to the App
 	_, err := c.proxyCommitCallback.CommitSync()
 	return err
@@ -181,8 +182,8 @@ Diff
 *******************************************************************************/
 
 // EventDiff returns events that c knowns about and are not in 'known'
-func (c *Core) EventDiff(known map[string]int) (events []*hashgraph.Event, err error) {
-	unknown := []*hashgraph.Event{}
+func (c *Core) EventDiff(known map[string]int) (events []*types.Event, err error) {
+	unknown := []*types.Event{}
 	//known represents the index of the last event known for every participant
 	//compare this to our view of events and fill unknown with events that we know of
 	// and the other doesnt
@@ -190,13 +191,13 @@ func (c *Core) EventDiff(known map[string]int) (events []*hashgraph.Event, err e
 		//get validator Events with index > ct
 		validatorEvents, ok := c.hashgraph.State.ValidatorEvents[address]
 		if !ok {
-			return []*hashgraph.Event{}, err
+			return []*types.Event{}, err
 		}
 		for _, e := range validatorEvents[height:] {
 			unknown = append(unknown, e)
 		}
 	}
-	sort.Sort(hashgraph.ByTopologicalOrder(unknown))
+	sort.Sort(types.ByTopologicalOrder(unknown))
 
 	return unknown, nil
 }
@@ -206,7 +207,7 @@ Pools
 *******************************************************************************/
 
 // AddTransactions appends transactions to the transaction pool
-func (c *Core) AddTransactions(txs types.Txs) {
+func (c *Core) AddTransactions(txs ttypes.Txs) {
 	c.transactionPool = append(c.transactionPool, txs...)
 }
 
@@ -215,17 +216,17 @@ Getters
 *******************************************************************************/
 
 // GetHead returns the head from the hashgraph store
-func (c *Core) GetHead() *hashgraph.Event {
+func (c *Core) GetHead() *types.Event {
 	return c.hashgraph.State.Events[c.Head]
 }
 
 // GetEvent returns an event from the state
-func (c *Core) GetEvent(hash string) *hashgraph.Event {
+func (c *Core) GetEvent(hash string) *types.Event {
 	return c.hashgraph.State.Events[hash]
 }
 
 // GetEventTransactions returns the transactions for an event
-func (c *Core) GetEventTransactions(hash string) (types.Txs, error) {
+func (c *Core) GetEventTransactions(hash string) (ttypes.Txs, error) {
 	ex := c.GetEvent(hash)
 	return ex.Transactions, nil
 }

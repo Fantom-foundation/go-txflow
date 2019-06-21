@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/andrecronje/babble-abci/eventpool"
 	"github.com/andrecronje/babble-abci/hashgraph"
 	"github.com/andrecronje/babble/src/service"
 
@@ -341,7 +342,7 @@ func NewNode(config *cfg.Config,
 	csMetrics, p2pMetrics, mempoolMetrics, smMetrics := metricsProvider(genDoc.ChainID)
 
 	// Make MempoolReactor
-	mempool := mempool.NewMempool(
+	mp := mempool.NewMempool(
 		config.Mempool,
 		proxyApp.Mempool(),
 		state.LastBlockHeight,
@@ -350,15 +351,15 @@ func NewNode(config *cfg.Config,
 		mempool.WithPostCheck(sm.TxPostCheck(state)),
 	)
 	mempoolLogger := logger.With("module", "mempool")
-	mempool.SetLogger(mempoolLogger)
+	mp.SetLogger(mempoolLogger)
 	if config.Mempool.WalEnabled() {
-		mempool.InitWAL() // no need to have the mempool wal during tests
+		mp.InitWAL() // no need to have the mempool wal during tests
 	}
-	mempoolReactor := mempool.NewMempoolReactor(config.Mempool, mempool)
+	mempoolReactor := mempool.NewMempoolReactor(config.Mempool, mp)
 	mempoolReactor.SetLogger(mempoolLogger)
 
 	if config.Consensus.WaitForTxs() {
-		mempool.EnableTxsAvailable()
+		mp.EnableTxsAvailable()
 	}
 
 	// Make Evidence Reactor
@@ -378,7 +379,7 @@ func NewNode(config *cfg.Config,
 		stateDB,
 		blockExecLogger,
 		proxyApp.Consensus(),
-		mempool,
+		mp,
 		evidencePool,
 		sm.BlockExecutorWithMetrics(smMetrics),
 	)
@@ -393,7 +394,7 @@ func NewNode(config *cfg.Config,
 		state.Copy(),
 		blockExec,
 		blockStore,
-		mempool,
+		mp,
 		evidencePool,
 		cs.StateMetrics(csMetrics),
 	)

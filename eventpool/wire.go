@@ -1,4 +1,4 @@
-package mempool
+package eventpool
 
 import (
 	amino "github.com/tendermint/go-amino"
