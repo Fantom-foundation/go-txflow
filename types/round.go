@@ -1,4 +1,4 @@
-package hashgraph
+package types
 
 import (
 	"bytes"
@@ -21,8 +21,8 @@ type RoundEvent struct {
 type Round struct {
 	CreatedEvents  map[string]RoundEvent
 	ReceivedEvents []string
-	queued         bool
-	decided        bool
+	Queued         bool
+	Decided        bool
 }
 
 func NewRound() *Round {
@@ -71,7 +71,7 @@ decided, even if new witnesses are added after it was first decided.
 */
 func (r *Round) WitnessesDecided(validatorSet *types.ValidatorSet) bool {
 	//if the round was already decided, it stays decided no matter what.
-	if r.decided {
+	if r.Decided {
 		return true
 	}
 
@@ -84,12 +84,12 @@ func (r *Round) WitnessesDecided(validatorSet *types.ValidatorSet) bool {
 		}
 	}
 
-	r.decided = c > validatorSet.TotalVotingPower()*2/3
+	r.Decided = c > validatorSet.TotalVotingPower()*2/3
 
-	return r.decided
+	return r.Decided
 }
 
-//return witnesses
+//Witnesses return witnesses
 func (r *Round) Witnesses() []string {
 	res := []string{}
 	for x, e := range r.CreatedEvents {
@@ -101,7 +101,7 @@ func (r *Round) Witnesses() []string {
 	return res
 }
 
-//return famous witnesses
+//FamousWitnesses return famous witnesses
 func (r *Round) FamousWitnesses() []string {
 	res := []string{}
 	for x, e := range r.CreatedEvents {
@@ -140,5 +140,5 @@ func (r *Round) Unmarshal(data []byte) error {
 }
 
 func (r *Round) IsQueued() bool {
-	return r.queued
+	return r.Queued
 }

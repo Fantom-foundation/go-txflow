@@ -8,7 +8,6 @@ import (
 	"github.com/tendermint/tendermint/crypto/merkle"
 	cmn "github.com/tendermint/tendermint/libs/common"
 	"github.com/tendermint/tendermint/types"
-	tmtime "github.com/tendermint/tendermint/types/time"
 )
 
 /*******************************************************************************
@@ -16,8 +15,8 @@ EventCoordinates
 *******************************************************************************/
 
 type EventCoordinates struct {
-	hash   string
-	height int64
+	Hex    string
+	Height int64
 }
 
 type CoordinatesMap map[string]EventCoordinates
@@ -43,22 +42,21 @@ type Event struct {
 	Parents      []cmn.HexBytes `json:"parents"`      //hashes of the event's parents, self-parent first
 	Height       int64          `json:"index"`        //index in the sequence of events created by Creator
 	Signature    []byte         `json:"signature"`    //creator's digital signature of body
-	Vote         *types.Vote    `json:"vote"`
 
-	topologicalIndex int64 `json:"topological_index"`
+	TopologicalIndex int64 `json:"topological_index"`
 
 	//used for sorting
-	round            int64 `json:"round"`
-	lamportTimestamp int64 `json:"lamport_timestamp"`
+	Round            int64 `json:"round"`
+	LamportTimestamp int64 `json:"lamport_timestamp"`
 
-	roundReceived int64 `json:"round_received"`
+	RoundReceived int64 `json:"round_received"`
 
-	lastAncestors    CoordinatesMap `json:"last_ancestors"`    //[validator pubkey] => last ancestor
-	firstDescendants CoordinatesMap `json:"first_descendants"` //[validator pubkey] => first descendant
+	LastAncestors    CoordinatesMap `json:"last_ancestors"`    //[validator pubkey] => last ancestor
+	FirstDescendants CoordinatesMap `json:"first_descendants"` //[validator pubkey] => first descendant
 
-	Creator crypto.PubKey  `json:"creator"`
-	hash    []cmn.HexBytes `json:"hash"`
-	hex     string         `json:"hex"`
+	Creator crypto.PubKey `json:"creator"`
+	hash    []cmn.HexBytes
+	hex     string
 }
 
 func NewEvent(txs types.Txs,
@@ -67,10 +65,13 @@ func NewEvent(txs types.Txs,
 	height int64) *Event {
 	//TODO: Check selfParent is made by creator
 	return &Event{
-		Transactions: txs,
-		Parents:      parents,
-		Creator:      creator,
-		Height:       height,
+		Transactions:     txs,
+		Parents:          parents,
+		Creator:          creator,
+		Height:           height,
+		RoundReceived:    -1,
+		Round:            -1,
+		LamportTimestamp: -1,
 	}
 }
 
@@ -81,20 +82,6 @@ func (e *Event) SelfParent() string {
 
 func (e *Event) Bytes() []byte {
 	return []byte(fmt.Sprintf("%v", e))
-}
-
-func (e *Event) GetVote() *types.Vote {
-	if e.Vote == nil {
-		e.Vote = &types.Vote{
-			ValidatorAddress: e.Creator.Address(),
-			Height:           e.Height,
-			Round:            int(e.round),
-			Timestamp:        tmtime.Now(),
-			Type:             types.ProposalType,
-			BlockID:          types.BlockID{Hash: e.Hash()},
-		}
-	}
-	return e.Vote
 }
 
 func (e *Event) OtherParent() string {
@@ -113,7 +100,6 @@ func (e *Event) Sign(privKey crypto.PrivKey) error {
 }
 
 func (e *Event) Verify() (bool, error) {
-
 	pubKey := e.Creator
 	signBytes := e.Hash()
 
@@ -140,22 +126,6 @@ func (e *Event) Hex() string {
 	return e.hex
 }
 
-func (e *Event) SetRound(r int64) {
-	e.round = r
-}
-
-func (e *Event) GetRound() int64 {
-	return e.round
-}
-
-func (e *Event) SetLamportTimestamp(t int64) {
-	e.lamportTimestamp = t
-}
-
-func (e *Event) SetRoundReceived(rr int64) {
-	e.roundReceived = rr
-}
-
 /*******************************************************************************
 Sorting
 *******************************************************************************/
@@ -168,7 +138,7 @@ type ByTopologicalOrder []*Event
 func (a ByTopologicalOrder) Len() int      { return len(a) }
 func (a ByTopologicalOrder) Swap(i, j int) { a[i], a[j] = a[j], a[i] }
 func (a ByTopologicalOrder) Less(i, j int) bool {
-	return a[i].topologicalIndex < a[j].topologicalIndex
+	return a[i].TopologicalIndex < a[j].TopologicalIndex
 }
 
 // ByLamportTimestamp implements sort.Interface for []Event based on
@@ -180,11 +150,11 @@ func (a ByLamportTimestamp) Len() int64      { return int64(len(a)) }
 func (a ByLamportTimestamp) Swap(i, j int64) { a[i], a[j] = a[j], a[i] }
 func (a ByLamportTimestamp) Less(i, j int64) bool {
 	it, jt := int64(-1), int64(-1)
-	if a[i].lamportTimestamp != -1 {
-		it = a[i].lamportTimestamp
+	if a[i].LamportTimestamp != -1 {
+		it = a[i].LamportTimestamp
 	}
-	if a[j].lamportTimestamp != -1 {
-		jt = a[j].lamportTimestamp
+	if a[j].LamportTimestamp != -1 {
+		jt = a[j].LamportTimestamp
 	}
 	return it < jt
 }

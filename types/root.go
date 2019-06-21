@@ -1,4 +1,4 @@
-package hashgraph
+package types
 
 //Root forms a base on top of which a participant's Events can be inserted. It
 //contains FrameEvents sorted by Lamport timestamp.

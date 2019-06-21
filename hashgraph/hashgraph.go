@@ -5,9 +5,10 @@ import (
 	"math"
 	"sort"
 
+	"github.com/andrecronje/babble-abci/types"
 	"github.com/andrecronje/babble/src/common"
 	"github.com/tendermint/tendermint/libs/log"
-	"github.com/tendermint/tendermint/types"
+	ttypes "github.com/tendermint/tendermint/types"
 )
 
 const (
@@ -78,7 +79,7 @@ func (h *Hashgraph) KnownEvents() map[string]int {
 
 //Init sets the initial ValidatorSet, which also creates the corresponding Roots and
 //updates the Validators.
-func (h *Hashgraph) Init(validatorSet *types.ValidatorSet) error {
+func (h *Hashgraph) Init(validatorSet *ttypes.ValidatorSet) error {
 	//Validators per round for hash and certificate
 	if err := h.State.SetValidatorSet(0, validatorSet); err != nil {
 		return fmt.Errorf("Error setting ValidatorSet: %v", err)
@@ -119,9 +120,9 @@ func (h *Hashgraph) _ancestor(x, y string) (bool, error) {
 	}
 
 	//Double check this logic, x's last Ancestors creator of Y
-	entry, ok := ex.lastAncestors[ey.Creator.Address().String()]
+	entry, ok := ex.LastAncestors[ey.Creator.Address().String()]
 
-	res := ok && entry.height >= ey.Height
+	res := ok && entry.Height >= ey.Height
 
 	return res, nil
 }
@@ -168,7 +169,7 @@ func (h *Hashgraph) see(x, y string) (bool, error) {
 }
 
 //true if x strongly sees y based on validator set
-func (h *Hashgraph) stronglySee(x, y string, validators *types.ValidatorSet) (bool, error) {
+func (h *Hashgraph) stronglySee(x, y string, validators *ttypes.ValidatorSet) (bool, error) {
 	if c, ok := h.stronglySees[TreKey{x, y, string(validators.Hash())}]; ok {
 		return c, nil
 	}
@@ -180,7 +181,7 @@ func (h *Hashgraph) stronglySee(x, y string, validators *types.ValidatorSet) (bo
 	return ss, nil
 }
 
-func (h *Hashgraph) _stronglySee(x, y string, validators *types.ValidatorSet) (bool, error) {
+func (h *Hashgraph) _stronglySee(x, y string, validators *ttypes.ValidatorSet) (bool, error) {
 
 	ex, ok := h.State.Events[x]
 	if !ok {
@@ -194,10 +195,10 @@ func (h *Hashgraph) _stronglySee(x, y string, validators *types.ValidatorSet) (b
 
 	c := int64(0)
 
-	validators.Iterate(func(index int, val *types.Validator) bool {
-		xla, xlaok := ex.lastAncestors[val.Address.String()]
-		yfd, yfdok := ey.firstDescendants[val.Address.String()]
-		if xlaok && yfdok && xla.height >= yfd.height {
+	validators.Iterate(func(index int, val *ttypes.Validator) bool {
+		xla, xlaok := ex.LastAncestors[val.Address.String()]
+		yfd, yfdok := ey.FirstDescendants[val.Address.String()]
+		if xlaok && yfdok && xla.Height >= yfd.Height {
 			// Need to accumulate voting power here
 			c++
 		}
@@ -332,8 +333,8 @@ func (h *Hashgraph) roundReceived(x string) (int64, error) {
 	}
 
 	res := int64(-1)
-	if ex.roundReceived != -1 {
-		res = ex.roundReceived
+	if ex.RoundReceived != -1 {
+		res = ex.RoundReceived
 	}
 
 	return res, nil
@@ -403,7 +404,7 @@ func (h *Hashgraph) roundDiff(x, y string) (int64, error) {
 
 //Check the SelfParent is the Creator's last known Event
 //returns error, warning
-func (h *Hashgraph) checkSelfParent(event *Event) (err, warn error) {
+func (h *Hashgraph) checkSelfParent(event *types.Event) (err, warn error) {
 	selfParent := event.SelfParent()
 	creator := event.Creator
 
@@ -429,7 +430,7 @@ func (h *Hashgraph) checkSelfParent(event *Event) (err, warn error) {
 }
 
 //Check if we know the OtherParent
-func (h *Hashgraph) checkOtherParent(event *Event) error {
+func (h *Hashgraph) checkOtherParent(event *types.Event) error {
 	otherParent := event.OtherParent()
 	if otherParent != "" {
 		//Check if we have it
@@ -442,61 +443,61 @@ func (h *Hashgraph) checkOtherParent(event *Event) error {
 }
 
 //initialize arrays of last ancestors and first descendants
-func (h *Hashgraph) initEventCoordinates(event *Event) error {
-	event.lastAncestors = NewCoordinatesMap()
-	event.firstDescendants = NewCoordinatesMap()
+func (h *Hashgraph) initEventCoordinates(event *types.Event) error {
+	event.LastAncestors = types.NewCoordinatesMap()
+	event.FirstDescendants = types.NewCoordinatesMap()
 
 	selfParent, selfParentOk := h.State.Events[event.SelfParent()]
 	otherParent, otherParentOk := h.State.Events[event.OtherParent()]
 
 	if !selfParentOk && otherParentOk {
-		event.lastAncestors = otherParent.lastAncestors.Copy()
+		event.LastAncestors = otherParent.LastAncestors.Copy()
 	} else if !otherParentOk && selfParentOk {
-		event.lastAncestors = selfParent.lastAncestors.Copy()
+		event.LastAncestors = selfParent.LastAncestors.Copy()
 	} else if otherParentOk && selfParentOk {
-		selfParentLastAncestors := selfParent.lastAncestors
-		otherParentLastAncestors := otherParent.lastAncestors
+		selfParentLastAncestors := selfParent.LastAncestors
+		otherParentLastAncestors := otherParent.LastAncestors
 
-		event.lastAncestors = selfParentLastAncestors.Copy()
+		event.LastAncestors = selfParentLastAncestors.Copy()
 		for p, ola := range otherParentLastAncestors {
-			sla, ok := event.lastAncestors[p]
-			if !ok || sla.height < ola.height {
-				event.lastAncestors[p] = EventCoordinates{
-					height: ola.height,
-					hash:   ola.hash,
+			sla, ok := event.LastAncestors[p]
+			if !ok || sla.Height < ola.Height {
+				event.LastAncestors[p] = types.EventCoordinates{
+					Height: ola.Height,
+					Hex:    ola.Hex,
 				}
 			}
 		}
 	}
 
-	event.firstDescendants[event.Creator.Address().String()] = EventCoordinates{
-		height: event.Height,
-		hash:   event.Hex(),
+	event.FirstDescendants[event.Creator.Address().String()] = types.EventCoordinates{
+		Height: event.Height,
+		Hex:    event.Hex(),
 	}
 
-	event.lastAncestors[event.Creator.Address().String()] = EventCoordinates{
-		height: event.Height,
-		hash:   event.Hex(),
+	event.LastAncestors[event.Creator.Address().String()] = types.EventCoordinates{
+		Height: event.Height,
+		Hex:    event.Hex(),
 	}
 
 	return nil
 }
 
 //update first descendant of each last ancestor to point to event
-func (h *Hashgraph) updateAncestorFirstDescendant(event *Event) error {
-	for _, c := range event.lastAncestors {
-		ah := c.hash
+func (h *Hashgraph) updateAncestorFirstDescendant(event *types.Event) error {
+	for _, c := range event.LastAncestors {
+		ah := c.Hex
 		for {
 			a, ok := h.State.Events[ah]
 			if !ok {
 				break
 			}
 
-			_, ok = a.firstDescendants[event.Creator.Address().String()]
+			_, ok = a.FirstDescendants[event.Creator.Address().String()]
 			if !ok {
-				a.firstDescendants[event.Creator.Address().String()] = EventCoordinates{
-					height: event.Height,
-					hash:   event.Hex(),
+				a.FirstDescendants[event.Creator.Address().String()] = types.EventCoordinates{
+					Height: event.Height,
+					Hex:    event.Hex(),
 				}
 				if err := h.State.SetEvent(a); err != nil {
 					return err
@@ -510,7 +511,7 @@ func (h *Hashgraph) updateAncestorFirstDescendant(event *Event) error {
 	return nil
 }
 
-func (h *Hashgraph) createFrameEvent(x string) (*FrameEvent, error) {
+func (h *Hashgraph) createFrameEvent(x string) (*types.FrameEvent, error) {
 	ev, ok := h.State.Events[x]
 	if !ok {
 		return nil, fmt.Errorf("FrameEvent %s not found", x)
@@ -538,7 +539,7 @@ func (h *Hashgraph) createFrameEvent(x string) (*FrameEvent, error) {
 		return nil, err
 	}
 
-	frameEvent := &FrameEvent{
+	frameEvent := &types.FrameEvent{
 		Core:             ev,
 		Round:            r,
 		LamportTimestamp: lt,
@@ -548,8 +549,8 @@ func (h *Hashgraph) createFrameEvent(x string) (*FrameEvent, error) {
 	return frameEvent, nil
 }
 
-func (h *Hashgraph) createRoot(validator string, head string) (*Root, error) {
-	root := NewRoot()
+func (h *Hashgraph) createRoot(validator string, head string) (*types.Root, error) {
+	root := types.NewRoot()
 
 	if head != "" {
 		headEvent, err := h.createFrameEvent(head)
@@ -557,7 +558,7 @@ func (h *Hashgraph) createRoot(validator string, head string) (*Root, error) {
 			return nil, err
 		}
 
-		reverseRootEvents := []*FrameEvent{headEvent}
+		reverseRootEvents := []*types.FrameEvent{headEvent}
 
 		height := headEvent.Core.Height
 		for i := 0; i < ROOT_DEPTH; i++ {
@@ -593,7 +594,7 @@ Public Methods
 
 //InsertEventAndRunConsensus inserts an Event in the Hashgraph and call the
 //consensus methods.
-func (h *Hashgraph) InsertEventAndRunConsensus(event *Event) error {
+func (h *Hashgraph) InsertEventAndRunConsensus(event *types.Event) error {
 	if err := h.InsertEvent(event); err != nil {
 		h.logger.Error("InsertEvent", "err", err)
 		return err
@@ -619,7 +620,7 @@ func (h *Hashgraph) InsertEventAndRunConsensus(event *Event) error {
 
 //InsertEvent attempts to insert an Event in the DAG. It verifies the signature,
 //checks the ancestors are known, and prevents the introduction of forks.
-func (h *Hashgraph) InsertEvent(event *Event) error {
+func (h *Hashgraph) InsertEvent(event *types.Event) error {
 	//verify signature
 	if ok, err := event.Verify(); !ok {
 		if err != nil {
@@ -658,7 +659,7 @@ func (h *Hashgraph) InsertEvent(event *Event) error {
 		return err
 	}
 
-	event.topologicalIndex = h.topologicalIndex
+	event.TopologicalIndex = h.topologicalIndex
 	h.topologicalIndex++
 
 	if err := h.initEventCoordinates(event); err != nil {
@@ -682,7 +683,7 @@ func (h *Hashgraph) InsertEvent(event *Event) error {
 
 //InsertFrameEvent inserts the FrameEvent's core Event, without checking its
 //parents or signature. It doesnt add the Event to UndeterminedEvents either.
-func (h *Hashgraph) InsertFrameEvent(frameEvent *FrameEvent) error {
+func (h *Hashgraph) InsertFrameEvent(frameEvent *types.FrameEvent) error {
 	event := frameEvent.Core
 
 	//Set caches so round, witness, and timestamp won't be recalculated
@@ -691,13 +692,13 @@ func (h *Hashgraph) InsertFrameEvent(frameEvent *FrameEvent) error {
 	h.timestamps[event.Hex()] = frameEvent.LamportTimestamp
 
 	//Set the event's private fields for later use
-	event.SetRound(frameEvent.Round)
-	event.SetLamportTimestamp(frameEvent.LamportTimestamp)
+	event.Round = frameEvent.Round
+	event.LamportTimestamp = frameEvent.LamportTimestamp
 
 	//Create/update RoundInfo object in store
 	round, ok := h.State.Rounds[frameEvent.Round]
 	if !ok {
-		round = NewRound()
+		round = types.NewRound()
 	}
 	round.AddCreatedEvent(event.Hex(), frameEvent.Witness)
 
@@ -739,22 +740,22 @@ func (h *Hashgraph) DivideRounds() error {
 
 		//Compute Event's round, update the corresponding Round object, and add
 		//it to the PendingRounds queue if necessary.
-		if ev.round == -1 {
+		if ev.Round == -1 {
 			roundNumber, err := h.round(hash)
 			if err != nil {
 				return err
 			}
 
-			ev.SetRound(roundNumber)
+			ev.Round = roundNumber
 			updateEvent = true
 
 			round, ok := h.State.Rounds[roundNumber]
 			if !ok {
-				round = NewRound()
+				round = types.NewRound()
 			}
 
 			if !h.PendingRounds.Queued(roundNumber) &&
-				!round.decided &&
+				!round.Decided &&
 				(h.roundLowerBound == nil || roundNumber > *h.roundLowerBound) {
 
 				h.PendingRounds.Set(&PendingRound{roundNumber, false})
@@ -771,12 +772,12 @@ func (h *Hashgraph) DivideRounds() error {
 		}
 
 		//Compute the Event's LamportTimestamp
-		if ev.lamportTimestamp == -1 {
+		if ev.LamportTimestamp == -1 {
 			lamportTimestamp, err := h.lamportTimestamp(hash)
 			if err != nil {
 				return err
 			}
-			ev.SetLamportTimestamp(lamportTimestamp)
+			ev.LamportTimestamp = lamportTimestamp
 			updateEvent = true
 		}
 
@@ -978,7 +979,7 @@ func (h *Hashgraph) DecideRoundReceived() error {
 					return nil
 				}
 
-				ex.SetRoundReceived(i)
+				ex.RoundReceived = i
 
 				err = h.State.SetEvent(ex)
 				if err != nil {
@@ -1088,7 +1089,7 @@ func (h *Hashgraph) ProcessDecidedRounds() error {
 }
 
 //GetFrame computes the Frame corresponding to a RoundReceived.
-func (h *Hashgraph) GetFrame(roundReceived int64) (*Frame, error) {
+func (h *Hashgraph) GetFrame(roundReceived int64) (*types.Frame, error) {
 	//Try to get it from the Store first
 	frame, ok := h.State.Frames[roundReceived]
 	if ok {
@@ -1106,7 +1107,7 @@ func (h *Hashgraph) GetFrame(roundReceived int64) (*Frame, error) {
 		return nil, nil
 	}
 
-	events := []*FrameEvent{}
+	events := []*types.FrameEvent{}
 	for _, eh := range round.ReceivedEvents {
 		re, err := h.createFrameEvent(eh)
 		if err != nil {
@@ -1115,14 +1116,14 @@ func (h *Hashgraph) GetFrame(roundReceived int64) (*Frame, error) {
 		events = append(events, re)
 	}
 
-	sort.Sort(SortedFrameEvents(events))
+	sort.Sort(types.SortedFrameEvents(events))
 
 	/*
 		Get/Create Roots. The events are in topological order; so each time we
 		run into the first Event of a participant, we create a Root for it. Then
 		we populate the root's Events slice.
 	*/
-	roots := make(map[string]*Root)
+	roots := make(map[string]*types.Root)
 
 	for _, ev := range events {
 		p := ev.Core.Creator
@@ -1148,7 +1149,7 @@ func (h *Hashgraph) GetFrame(roundReceived int64) (*Frame, error) {
 		//Ignore if participant wasn't added before roundReceived
 
 		if _, ok := roots[validator.Address.String()]; !ok {
-			var root *Root
+			var root *types.Root
 
 			lastConsensusEventHash, err := h.State.LastConsensusEventFrom(validator.Address.String())
 			if err != nil {
@@ -1164,7 +1165,7 @@ func (h *Hashgraph) GetFrame(roundReceived int64) (*Frame, error) {
 		}
 	}
 
-	res := &Frame{
+	res := &types.Frame{
 		Round:         roundReceived,
 		Validators:    validatorSet.Validators,
 		Roots:         roots,
@@ -1226,18 +1227,18 @@ a layer of indirection because processing the CommitResponse should be handled
 by the Core object, not the hashgraph; the hashgraph only known if there was
 an error or not.
 */
-type InternalCommitCallback func(*types.Block) error
+type InternalCommitCallback func(*ttypes.Block) error
 
 //DummyInternalCommitCallback is used for testing
-func DummyInternalCommitCallback(b *types.Block) error {
+func DummyInternalCommitCallback(b *ttypes.Block) error {
 	return nil
 }
 
-func NewBlockFromFrame(blockIndex int64, frame *Frame) *types.Block {
-	transactions := types.Txs{}
+func NewBlockFromFrame(blockIndex int64, frame *types.Frame) *ttypes.Block {
+	transactions := ttypes.Txs{}
 	for _, e := range frame.Events {
 		transactions = append(transactions, e.Core.Transactions...)
 	}
 
-	return types.MakeBlock(blockIndex, transactions, nil, nil)
+	return ttypes.MakeBlock(blockIndex, transactions, nil, nil)
 }

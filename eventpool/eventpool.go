@@ -9,9 +9,9 @@ import (
 
 	"github.com/pkg/errors"
 
+	"github.com/andrecronje/babble-abci/config"
 	"github.com/andrecronje/babble-abci/types"
 	abci "github.com/tendermint/tendermint/abci/types"
-	cfg "github.com/tendermint/tendermint/config"
 	auto "github.com/tendermint/tendermint/libs/autofile"
 	"github.com/tendermint/tendermint/libs/clist"
 	cmn "github.com/tendermint/tendermint/libs/common"
@@ -39,8 +39,8 @@ var (
 	ErrEventTooLarge = fmt.Errorf("Event too large. Max size is %d", maxEventSize)
 )
 
-// ErrMempoolIsFull means Tendermint & an application can't handle that much load
-type ErrMempoolIsFull struct {
+// ErrEventpoolIsFull means Tendermint & an application can't handle that much load
+type ErrEventpoolIsFull struct {
 	numEvents int
 	maxEvents int
 
@@ -48,9 +48,9 @@ type ErrMempoolIsFull struct {
 	maxEventsBytes int64
 }
 
-func (e ErrMempoolIsFull) Error() string {
+func (e ErrEventpoolIsFull) Error() string {
 	return fmt.Sprintf(
-		"Mempool is full: number of events %d (max: %d), total event bytes %d (max: %d)",
+		"Eventpool is full: number of events %d (max: %d), total event bytes %d (max: %d)",
 		e.numEvents, e.maxEvents,
 		e.eventsBytes, e.maxEventsBytes)
 }
@@ -84,7 +84,7 @@ func eventKey(event types.Event) [sha256.Size]byte {
 // round. The Eventpool uses a concurrent list structure for storing transactions that
 // can be efficiently accessed by multiple concurrent readers.
 type Eventpool struct {
-	config   *cfg.MempoolConfig
+	config   *config.EventpoolConfig
 	proxyMtx sync.Mutex
 
 	events *clist.CList // concurrent linked-list of good txs
@@ -119,7 +119,7 @@ type EventpoolOption func(*Eventpool)
 
 // NewEventpool returns a new Eventpool with the given configuration and connection to an application.
 func NewEventpool(
-	config *cfg.MempoolConfig,
+	config *config.EventpoolConfig,
 	height int64,
 	options ...EventpoolOption,
 ) *Eventpool {
@@ -262,10 +262,10 @@ func (ep *Eventpool) CheckEventWithInfo(event types.Event, cb func(*abci.Respons
 	)
 	//TODO: Check Size
 	if memSize >= ep.config.Size ||
-		int64(len(event.Bytes()))+eventsBytes > ep.config.MaxTxsBytes {
-		return ErrMempoolIsFull{
+		int64(len(event.Bytes()))+eventsBytes > ep.config.MaxEventsBytes {
+		return ErrEventpoolIsFull{
 			memSize, ep.config.Size,
-			eventsBytes, ep.config.MaxTxsBytes}
+			eventsBytes, ep.config.MaxEventsBytes}
 	}
 
 	// The size of the corresponding amino-encoded EventMessage

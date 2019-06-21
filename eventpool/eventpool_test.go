@@ -15,15 +15,16 @@ import (
 
 	amino "github.com/tendermint/go-amino"
 
+	"github.com/andrecronje/babble-abci/config"
 	"github.com/andrecronje/babble-abci/types"
 	"github.com/tendermint/tendermint/abci/example/counter"
 	"github.com/tendermint/tendermint/abci/example/kvstore"
 	abciserver "github.com/tendermint/tendermint/abci/server"
 	abci "github.com/tendermint/tendermint/abci/types"
-	cfg "github.com/tendermint/tendermint/config"
 	cmn "github.com/tendermint/tendermint/libs/common"
 	"github.com/tendermint/tendermint/libs/log"
 	"github.com/tendermint/tendermint/proxy"
+	ttypes "github.com/tendermint/tendermint/types"
 )
 
 // A cleanupFunc cleans up any config / test files created for a particular
@@ -31,17 +32,17 @@ import (
 type cleanupFunc func()
 
 func newEventpoolWithApp(cc proxy.ClientCreator) (*Eventpool, cleanupFunc) {
-	return newEventpoolWithAppAndConfig(cc, cfg.ResetTestRoot("eventpool_test"))
+	return newEventpoolWithAppAndConfig(cc, config.TestEventpoolConfig())
 }
 
-func newEventpoolWithAppAndConfig(cc proxy.ClientCreator, config *cfg.Config) (*Eventpool, cleanupFunc) {
+func newEventpoolWithAppAndConfig(cc proxy.ClientCreator, config *config.EventpoolConfig) (*Eventpool, cleanupFunc) {
 	appConnMem, _ := cc.NewABCIClient()
 	appConnMem.SetLogger(log.TestingLogger().With("module", "abci-client", "connection", "eventpool"))
 	err := appConnMem.Start()
 	if err != nil {
 		panic(err)
 	}
-	eventpool := NewEventpool(config.Mempool, 0)
+	eventpool := NewEventpool(config, 0)
 	eventpool.SetLogger(log.TestingLogger())
 	return eventpool, func() { os.RemoveAll(config.RootDir) }
 }
@@ -180,8 +181,9 @@ func TestSerialReap(t *testing.T) {
 	updateRange := func(start, end int) {
 		events := make([]types.Event, 0)
 		for i := start; i < end; i++ {
-			events[i] = types.Event{}
-			events[i].Height = int64(i)
+			event := types.Event{}
+			event.Height = int64(i)
+			events = append(events, event)
 		}
 		if err := eventpool.Update(0, events); err != nil {
 			t.Error(err)
@@ -225,7 +227,7 @@ func TestEventpoolCloseWAL(t *testing.T) {
 	require.Equal(t, 0, len(m1), "no matches yet")
 
 	// 3. Create the eventpool
-	wcfg := cfg.DefaultMempoolConfig()
+	wcfg := config.DefaultEventpoolConfig()
 	wcfg.RootDir = rootDir
 	defer os.RemoveAll(wcfg.RootDir)
 	eventpool := NewEventpool(wcfg, 10)
@@ -300,7 +302,7 @@ func TestEventpoolMaxMsgSize(t *testing.T) {
 		caseString := fmt.Sprintf("case %d, len %d", i, testCase.len)
 
 		event := types.Event{}
-		event.Transactions[0] = cmn.RandBytes(testCase.len)
+		event.Transactions = ttypes.Txs{cmn.RandBytes(testCase.len)}
 		err := eventpool.CheckEvent(event, nil)
 		msg := &EventMessage{event}
 		encoded := cdc.MustMarshalBinaryBare(msg)
@@ -319,8 +321,8 @@ func TestEventpoolMaxMsgSize(t *testing.T) {
 func TestEventpoolEventsBytes(t *testing.T) {
 	app := kvstore.NewKVStoreApplication()
 	cc := proxy.NewLocalClientCreator(app)
-	config := cfg.ResetTestRoot("mempool_test")
-	config.Mempool.MaxTxsBytes = 10
+	config := config.TestEventpoolConfig()
+	config.MaxEventsBytes = 10
 	eventpool, cleanup := newEventpoolWithAppAndConfig(cc, config)
 	defer cleanup()
 
@@ -374,7 +376,7 @@ func TestEventpoolRemoteAppConcurrency(t *testing.T) {
 	app := kvstore.NewKVStoreApplication()
 	cc, server := newRemoteApp(t, sockPath, app)
 	defer server.Stop()
-	config := cfg.ResetTestRoot("eventpool_test")
+	config := config.TestEventpoolConfig()
 	eventpool, cleanup := newEventpoolWithAppAndConfig(cc, config)
 	defer cleanup()
 
@@ -387,7 +389,7 @@ func TestEventpoolRemoteAppConcurrency(t *testing.T) {
 	}
 
 	// simulate a group of peers sending them over and over
-	N := config.Mempool.Size
+	N := config.Size
 	maxPeers := 5
 	for i := 0; i < N; i++ {
 		peerID := mrand.Intn(maxPeers)
