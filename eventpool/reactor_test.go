@@ -12,11 +12,10 @@ import (
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 
+	"github.com/andrecronje/babble-abci/config"
 	"github.com/andrecronje/babble-abci/types"
 	"github.com/tendermint/tendermint/abci/example/kvstore"
-	cfg "github.com/tendermint/tendermint/config"
 	"github.com/tendermint/tendermint/libs/log"
-	"github.com/tendermint/tendermint/p2p"
 	"github.com/tendermint/tendermint/p2p/mock"
 	"github.com/tendermint/tendermint/proxy"
 	ttypes "github.com/tendermint/tendermint/types"
@@ -44,7 +43,7 @@ func eventpoolLogger() log.Logger {
 }
 
 // connect N eventpool reactors through N switches
-func makeAndConnectEventpoolReactors(config *cfg.Config, N int) []*EventpoolReactor {
+func makeAndConnectEventpoolReactors(config *config.EventpoolConfig, N int) []*EventpoolReactor {
 	reactors := make([]*EventpoolReactor, N)
 	logger := eventpoolLogger()
 	for i := 0; i < N; i++ {
@@ -53,15 +52,15 @@ func makeAndConnectEventpoolReactors(config *cfg.Config, N int) []*EventpoolReac
 		eventpool, cleanup := newEventpoolWithApp(cc)
 		defer cleanup()
 
-		reactors[i] = NewEventpoolReactor(config.Mempool, eventpool) // so we dont start the consensus states
+		reactors[i] = NewEventpoolReactor(config, eventpool) // so we dont start the consensus states
 		reactors[i].SetLogger(logger.With("validator", i))
 	}
 
-	p2p.MakeConnectedSwitches(config.P2P, N, func(i int, s *p2p.Switch) *p2p.Switch {
+	/*p2p.MakeConnectedSwitches(config.P2P, N, func(i int, s *p2p.Switch) *p2p.Switch {
 		s.AddReactor("EVENTPOOL", reactors[i])
 		return s
 
-	}, p2p.Connect2Switches)
+	}, p2p.Connect2Switches)*/
 	return reactors
 }
 
@@ -115,7 +114,7 @@ const (
 )
 
 func TestReactorBroadcastEventMessage(t *testing.T) {
-	config := cfg.TestConfig()
+	config := config.TestEventpoolConfig()
 	const N = 4
 	reactors := makeAndConnectEventpoolReactors(config, N)
 	defer func() {
@@ -136,7 +135,7 @@ func TestReactorBroadcastEventMessage(t *testing.T) {
 }
 
 func TestReactorNoBroadcastToSender(t *testing.T) {
-	config := cfg.TestConfig()
+	config := config.TestEventpoolConfig()
 	const N = 2
 	reactors := makeAndConnectEventpoolReactors(config, N)
 	defer func() {
@@ -156,7 +155,7 @@ func TestBroadcastEventForPeerStopsWhenPeerStops(t *testing.T) {
 		t.Skip("skipping test in short mode.")
 	}
 
-	config := cfg.TestConfig()
+	config := config.TestEventpoolConfig()
 	const N = 2
 	reactors := makeAndConnectEventpoolReactors(config, N)
 	defer func() {
@@ -179,7 +178,7 @@ func TestBroadcastEventForPeerStopsWhenReactorStops(t *testing.T) {
 		t.Skip("skipping test in short mode.")
 	}
 
-	config := cfg.TestConfig()
+	config := config.TestEventpoolConfig()
 	const N = 2
 	reactors := makeAndConnectEventpoolReactors(config, N)
 

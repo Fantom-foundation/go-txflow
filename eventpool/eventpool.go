@@ -170,7 +170,7 @@ func (ep *Eventpool) InitWAL() {
 	if err != nil {
 		panic(errors.Wrap(err, "Error ensuring Mempool WAL dir"))
 	}
-	af, err := auto.OpenAutoFile(walDir + "/wal")
+	af, err := auto.OpenAutoFile(walDir + "/ewal")
 	if err != nil {
 		panic(errors.Wrap(err, "Error opening Mempool WAL file"))
 	}

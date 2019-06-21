@@ -9,8 +9,8 @@ import (
 
 	amino "github.com/tendermint/go-amino"
 
+	"github.com/andrecronje/babble-abci/config"
 	"github.com/andrecronje/babble-abci/types"
-	cfg "github.com/tendermint/tendermint/config"
 	"github.com/tendermint/tendermint/libs/clist"
 	"github.com/tendermint/tendermint/libs/log"
 	"github.com/tendermint/tendermint/p2p"
@@ -37,7 +37,7 @@ const (
 // peers you received it from.
 type EventpoolReactor struct {
 	p2p.BaseReactor
-	config    *cfg.MempoolConfig
+	config    *config.EventpoolConfig
 	Eventpool *Eventpool
 	ids       *eventpoolIDs
 }
@@ -106,7 +106,7 @@ func newEventpoolIDs() *eventpoolIDs {
 }
 
 // NewMEventpoolReactor returns a new MempoolReactor with the given config and mempool.
-func NewEventpoolReactor(config *cfg.MempoolConfig, eventpool *Eventpool) *EventpoolReactor {
+func NewEventpoolReactor(config *config.EventpoolConfig, eventpool *Eventpool) *EventpoolReactor {
 	epR := &EventpoolReactor{
 		config:    config,
 		Eventpool: eventpool,

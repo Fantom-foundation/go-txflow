@@ -64,7 +64,7 @@ func (cfg *EventpoolConfig) ValidateBasic() error {
 		return errors.New("size can't be negative")
 	}
 	if cfg.MaxEventsBytes < 0 {
-		return errors.New("max_txs_bytes can't be negative")
+		return errors.New("max_events_bytes can't be negative")
 	}
 	if cfg.CacheSize < 0 {
 		return errors.New("cache_size can't be negative")

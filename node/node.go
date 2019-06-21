@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	conf "github.com/andrecronje/babble-abci/config"
 	"github.com/andrecronje/babble-abci/eventpool"
 	"github.com/andrecronje/babble-abci/hashgraph"
 	"github.com/andrecronje/babble/src/service"
@@ -107,19 +108,20 @@ type Node struct {
 }
 
 // MetricsProvider returns a consensus, p2p and mempool Metrics.
-type MetricsProvider func(chainID string) (*cs.Metrics, *p2p.Metrics, *mempool.Metrics, *sm.Metrics)
+type MetricsProvider func(chainID string) (*cs.Metrics, *p2p.Metrics, *mempool.Metrics, *sm.Metrics, *eventpool.Metrics)
 
 // DefaultMetricsProvider returns Metrics build using Prometheus client library
 // if Prometheus is enabled. Otherwise, it returns no-op Metrics.
 func DefaultMetricsProvider(config *cfg.InstrumentationConfig) MetricsProvider {
-	return func(chainID string) (*cs.Metrics, *p2p.Metrics, *mempool.Metrics, *sm.Metrics) {
+	return func(chainID string) (*cs.Metrics, *p2p.Metrics, *mempool.Metrics, *sm.Metrics, *eventpool.Metrics) {
 		if config.Prometheus {
 			return cs.PrometheusMetrics(config.Namespace, "chain_id", chainID),
 				p2p.PrometheusMetrics(config.Namespace, "chain_id", chainID),
 				mempool.PrometheusMetrics(config.Namespace, "chain_id", chainID),
-				sm.PrometheusMetrics(config.Namespace, "chain_id", chainID)
+				sm.PrometheusMetrics(config.Namespace, "chain_id", chainID),
+				eventpool.PrometheusMetrics(config.Namespace, "chain_id", chainID)
 		}
-		return cs.NopMetrics(), p2p.NopMetrics(), mempool.NopMetrics(), sm.NopMetrics()
+		return cs.NopMetrics(), p2p.NopMetrics(), mempool.NopMetrics(), sm.NopMetrics(), eventpool.NopMetrics()
 	}
 }
 
@@ -339,7 +341,18 @@ func NewNode(config *cfg.Config,
 		consensusLogger.Info("This node is not a validator", "addr", addr, "pubKey", pubKey)
 	}
 
-	csMetrics, p2pMetrics, mempoolMetrics, smMetrics := metricsProvider(genDoc.ChainID)
+	csMetrics, p2pMetrics, mempoolMetrics, smMetrics, eventpoolMetrics := metricsProvider(genDoc.ChainID)
+
+	eventPoolConfig := conf.DefaultEventpoolConfig()
+	eventPoolConfig.RootDir = config.Mempool.RootDir
+	eventPoolConfig.Recheck = config.Mempool.Recheck
+	eventPoolConfig.Broadcast = config.Mempool.Broadcast
+	eventPoolConfig.WalPath = config.Mempool.WalPath
+	eventPoolConfig.Size = config.Mempool.Size
+	eventPoolConfig.MaxEventsBytes = config.Mempool.MaxTxsBytes
+	eventPoolConfig.CacheSize = config.Mempool.CacheSize
+
+	config.Mempool.Broadcast = false
 
 	// Make MempoolReactor
 	mp := mempool.NewMempool(
@@ -360,6 +373,24 @@ func NewNode(config *cfg.Config,
 
 	if config.Consensus.WaitForTxs() {
 		mp.EnableTxsAvailable()
+	}
+
+	// Make EventpoolReactor
+	ep := eventpool.NewEventpool(
+		eventPoolConfig,
+		state.LastBlockHeight,
+		eventpool.WithMetrics(eventpoolMetrics),
+	)
+	eventpoolLogger := logger.With("module", "eventpool")
+	ep.SetLogger(eventpoolLogger)
+	if config.Mempool.WalEnabled() {
+		mp.InitWAL() // no need to have the mempool wal during tests
+	}
+	eventpoolReactor := eventpool.NewEventpoolReactor(eventPoolConfig, ep)
+	eventpoolReactor.SetLogger(eventpoolLogger)
+
+	if config.Consensus.WaitForTxs() {
+		ep.EnableEventsAvailable()
 	}
 
 	// Make Evidence Reactor
