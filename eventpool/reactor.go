@@ -17,6 +17,23 @@ import (
 	ttypes "github.com/tendermint/tendermint/types"
 )
 
+/*
+
+Event pool reactor recieves events and broadcasts them to connected peers
+Mem pool reactor receives transactions and holds them locally, it does ask
+the application to validate the Tx both pre and on commit
+
+If tx is available, or event block is available, or a timeout is available
+we should create events. Events need to be saved in the graph, the graph will
+create blocks from the previous roots and refresh the graph everytime
+
+Transactions not in a block will be removed after a new block is received
+
+Block packging could have descrepencies in the network
+
+
+*/
+
 const (
 	EventpoolChannel = byte(0x30)
 
