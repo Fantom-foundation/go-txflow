@@ -16,7 +16,7 @@ import (
 // - generalize this past the first height
 // - add txs and build up full State properly
 // - test block.Time (see #2587 - there are no conditions on time for the first height)
-func TestValidateBlockHeader(t *testing.T) {
+func TestValidateEventBlockHeader(t *testing.T) {
 	var height int64 = 1 // TODO(#2589): generalize
 	state, stateDB := state(1, int(height))
 

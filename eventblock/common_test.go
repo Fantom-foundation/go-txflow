@@ -84,7 +84,7 @@ func (vs *validatorStub) signVote(voteType types.SignedMsgType, hash []byte, hea
 		Round:            vs.Round,
 		Timestamp:        tmtime.Now(),
 		Type:             voteType,
-		BlockID:          types.BlockID{hash, header},
+		BlockID:          EventBlockID{hash, header},
 	}
 	err := vs.PrivValidator.SignVote(config.ChainID(), vote)
 	return vote, err
@@ -139,7 +139,7 @@ func decideProposal(cs1 *ConsensusState, vs *validatorStub, height int64, round 
 	}
 
 	// Make proposal
-	polRound, propBlockID := validRound, types.BlockID{block.Hash(), blockParts.Header()}
+	polRound, propBlockID := validRound, EventBlockID{block.Hash(), blockParts.Header()}
 	proposal = types.NewProposal(height, round, polRound, propBlockID)
 	if err := vs.SignProposal(chainID, proposal); err != nil {
 		panic(err)
@@ -467,7 +467,7 @@ func ensureNewUnlock(unlockCh <-chan tmpubsub.Message, height int64, round int) 
 		"Timeout expired while waiting for NewUnlock event")
 }
 
-func ensureProposal(proposalCh <-chan tmpubsub.Message, height int64, round int, propID types.BlockID) {
+func ensureProposal(proposalCh <-chan tmpubsub.Message, height int64, round int, propID EventBlockID) {
 	select {
 	case <-time.After(ensureTimeout):
 		panic("Timeout expired while waiting for NewProposal event")

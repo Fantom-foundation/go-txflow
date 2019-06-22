@@ -57,8 +57,8 @@ type State struct {
 
 	// LastBlockHeight=0 at genesis (ie. block(H=0) does not exist)
 	LastEventBlockHeight int64
-	LastSelfEventBlockID ttypes.BlockID
-	LastEventBlockIDs    []ttypes.BlockID
+	LastSelfEventBlockID types.EventBlockID
+	LastEventBlockIDs    []types.EventBlockID
 	LastEventBlockTime   time.Time
 	LastEventBlocks      []types.EventBlock
 
@@ -126,6 +126,7 @@ func (state State) MakeEventBlock(
 	height int64,
 	txs []ttypes.Tx,
 	evidence []ttypes.Evidence,
+	eventBlockIDs []types.EventBlockID,
 	proposerAddress []byte,
 ) (*types.EventBlock, *ttypes.PartSet) {
 
@@ -225,7 +226,7 @@ func MakeGenesisState(genDoc *ttypes.GenesisDoc) (State, error) {
 		ChainID: genDoc.ChainID,
 
 		LastEventBlockHeight: 0,
-		LastEventBlockIDs:    []ttypes.BlockID{},
+		LastEventBlockIDs:    []tEventBlockID{},
 		LastEventBlockTime:   genDoc.GenesisTime,
 
 		NextValidators:              nextValidatorSet,

@@ -80,6 +80,11 @@ func eventKey(event *types.EventBlock) [sha256.Size]byte {
 	return sha256.Sum256(event.Hash())
 }
 
+// proposerKey is the fixed length array sha256 hash used as the key in maps.
+func proposerKey(event *types.EventBlock) [sha256.Size]byte {
+	return sha256.Sum256(event.ProposerAddress)
+}
+
 // Eventpool is an ordered in-memory pool for events before they are proposed in a consensus
 // round. The Eventpool uses a concurrent list structure for storing transactions that
 // can be efficiently accessed by multiple concurrent readers.
@@ -87,7 +92,7 @@ type Eventpool struct {
 	config   *config.EventpoolConfig
 	proxyMtx sync.Mutex
 
-	events *clist.CList // concurrent linked-list of good txs
+	events *clist.CList // concurrent linked-list of good events
 
 	// notify listeners (ie. consensus) when events are available
 	notifiedEventsAvailable bool
@@ -95,7 +100,8 @@ type Eventpool struct {
 
 	// Map for quick access to events to record sender.
 	// eventsMap: eventKey -> CElement
-	eventsMap sync.Map
+	eventsMap     sync.Map
+	headEventsMap sync.Map
 
 	// Atomic integers
 	height      int64 // the last event Update()'d to
@@ -103,7 +109,6 @@ type Eventpool struct {
 	eventsBytes int64 // total size of eventpool, in bytes
 
 	// Keep a cache of already-seen events.
-	// This reduces the pressure on the proxyApp.
 	cache eventsCache
 
 	// A log of eventspool events
@@ -199,7 +204,7 @@ func (ep *Eventpool) Unlock() {
 	ep.proxyMtx.Unlock()
 }
 
-// Size returns the number of transactions in the eventpool.
+// Size returns the number of events in the eventpool.
 func (ep *Eventpool) Size() int {
 	return ep.events.Len()
 }
@@ -278,7 +283,7 @@ func (ep *Eventpool) CheckEventWithInfo(event *types.EventBlock, cb func(*abci.R
 	// CACHE
 	if !ep.cache.Push(event) {
 		// Record a new sender for a event we've already seen.
-		// Note it's possible a event is still in the cache but no longer in the eventpool
+		// Note it's possible an event is still in the cache but no longer in the eventpool
 		// (eg. after committing a block, events are removed from eventpool but not cache),
 		// so we only record the sender for events still in the eventpool.
 		if e, ok := ep.eventsMap.Load(eventKey(event)); ok {
@@ -296,9 +301,9 @@ func (ep *Eventpool) CheckEventWithInfo(event *types.EventBlock, cb func(*abci.R
 
 	// WAL
 	//TODO: Convert event to byte array
-	/*if ep.wal != nil {
+	if ep.wal != nil {
 		// TODO: Notify administrators when WAL fails
-		_, err := ep.wal.Write([]byte(event))
+		_, err := ep.wal.Write([]byte(cdc.MustMarshalBinaryBare(event)))
 		if err != nil {
 			ep.logger.Error("Error writing to WAL", "err", err)
 		}
@@ -306,7 +311,7 @@ func (ep *Eventpool) CheckEventWithInfo(event *types.EventBlock, cb func(*abci.R
 		if err != nil {
 			ep.logger.Error("Error writing to WAL", "err", err)
 		}
-	}*/
+	}
 	// END WAL
 
 	epE := &eventpoolEvent{
@@ -331,6 +336,17 @@ func (ep *Eventpool) CheckEventWithInfo(event *types.EventBlock, cb func(*abci.R
 func (ep *Eventpool) addEvent(epE *eventpoolEvent) {
 	e := ep.events.PushBack(epE)
 	ep.eventsMap.Store(eventKey(epE.event), e)
+	// Compare with previous proposer event to see if new height event
+	// We only want to bond to top events in the DAG
+	if e, ok := ep.headEventsMap.Load(proposerKey(epE.event)); ok {
+		epHe := e.(*clist.CElement).Value.(*eventpoolEvent)
+		if epHe.event.Header.Height <= epE.event.Header.Height {
+			ep.headEventsMap.Store(proposerKey(epE.event), e)
+		}
+	} else {
+		ep.headEventsMap.Store(proposerKey(epE.event), e)
+	}
+
 	atomic.AddInt64(&ep.eventsBytes, int64(epE.event.Size()))
 	ep.metrics.EventSizeBytes.Observe(float64(epE.event.Size()))
 }
@@ -342,6 +358,8 @@ func (ep *Eventpool) removeEvent(event *types.EventBlock, elem *clist.CElement, 
 	ep.events.Remove(elem)
 	elem.DetachPrev()
 	ep.eventsMap.Delete(eventKey(event))
+	// Remove from proposer map as well
+	ep.headEventsMap.Delete(proposerKey(event))
 	atomic.AddInt64(&ep.eventsBytes, int64(-event.Size()))
 
 	if removeFromCache {
@@ -387,6 +405,34 @@ func (ep *Eventpool) ReapMaxEvents(max int) []*types.EventBlock {
 		events = append(events, epE.event)
 	}
 	return events
+}
+
+// HeadEvents returns head events from the eventpool.
+func (ep *Eventpool) HeadEvents() []*types.EventBlock {
+	ep.proxyMtx.Lock()
+	defer ep.proxyMtx.Unlock()
+
+	events := []*types.EventBlock{}
+	ep.headEventsMap.Range(func(k, v interface{}) bool {
+		epE := v.(*clist.CElement).Value.(*eventpoolEvent)
+		events = append(events, epE.event)
+		return true
+	})
+	return events
+}
+
+// HeadEventBlockIDs returns head events from the eventpool.
+func (ep *Eventpool) HeadEventBlockIDs() []types.EventBlockID {
+	ep.proxyMtx.Lock()
+	defer ep.proxyMtx.Unlock()
+
+	eventBlockIDs := []types.EventBlockID{}
+	ep.headEventsMap.Range(func(k, v interface{}) bool {
+		epE := v.(*clist.CElement).Value.(*eventpoolEvent)
+		eventBlockIDs = append(eventBlockIDs, types.EventBlockID{Hash: epE.event.Hash()})
+		return true
+	})
+	return eventBlockIDs
 }
 
 // Update informs the mempool that the given events were committed and can be discarded.
@@ -527,6 +573,74 @@ func (cache *mapEventsCache) Remove(event *types.EventBlock) {
 	eventHash := eventKey(event)
 	popped := cache.map_[eventHash]
 	delete(cache.map_, eventHash)
+	if popped != nil {
+		cache.list.Remove(popped)
+	}
+
+	cache.mtx.Unlock()
+}
+
+// mapHeadEventsCache maintains a LRU cache of events. This only stores the hash
+// of the event, due to memory concerns.
+type mapHeadEventsCache struct {
+	mtx  sync.Mutex
+	size int
+	map_ map[[sha256.Size]byte]*list.Element
+	list *list.List
+}
+
+var _ eventsCache = (*mapHeadEventsCache)(nil)
+
+// newMapHeadEventsCache returns a new mapEventCache.
+func newMapHeadEventsCache(cacheSize int) *mapHeadEventsCache {
+	return &mapHeadEventsCache{
+		size: cacheSize,
+		map_: make(map[[sha256.Size]byte]*list.Element, cacheSize),
+		list: list.New(),
+	}
+}
+
+// Reset resets the cache to an empty state.
+func (cache *mapHeadEventsCache) Reset() {
+	cache.mtx.Lock()
+	cache.map_ = make(map[[sha256.Size]byte]*list.Element, cache.size)
+	cache.list.Init()
+	cache.mtx.Unlock()
+}
+
+// Push adds the given event to the cache and returns true. It returns
+// false if event is already in the cache.
+func (cache *mapHeadEventsCache) Push(event *types.EventBlock) bool {
+	cache.mtx.Lock()
+	defer cache.mtx.Unlock()
+
+	// Use the proposer hash in the cache
+	proposerHash := proposerKey(event)
+
+	if moved, exists := cache.map_[proposerHash]; exists {
+		cache.list.MoveToBack(moved)
+		return false
+	}
+
+	if cache.list.Len() >= cache.size {
+		popped := cache.list.Front()
+		poppedProposerHash := popped.Value.([sha256.Size]byte)
+		delete(cache.map_, poppedProposerHash)
+		if popped != nil {
+			cache.list.Remove(popped)
+		}
+	}
+	e := cache.list.PushBack(proposerHash)
+	cache.map_[proposerHash] = e
+	return true
+}
+
+// Remove removes the given event from the cache.
+func (cache *mapHeadEventsCache) Remove(event *types.EventBlock) {
+	cache.mtx.Lock()
+	proposerHash := proposerKey(event)
+	popped := cache.map_[proposerHash]
+	delete(cache.map_, proposerHash)
 	if popped != nil {
 		cache.list.Remove(popped)
 	}

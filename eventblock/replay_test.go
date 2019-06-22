@@ -407,7 +407,7 @@ func applyBlock(stateDB dbm.DB, st sm.State, blk *types.Block, proxyApp proxy.Ap
 	testPartSize := types.BlockPartSizeBytes
 	blockExec := sm.NewBlockExecutor(stateDB, log.TestingLogger(), proxyApp.Consensus(), mempool, evpool)
 
-	blkID := types.BlockID{blk.Hash(), blk.MakePartSet(testPartSize).Header()}
+	blkID := EventBlockID{blk.Hash(), blk.MakePartSet(testPartSize).Header()}
 	newState, err := blockExec.ApplyBlock(st, blkID, blk)
 	if err != nil {
 		panic(err)
@@ -626,7 +626,7 @@ func (bs *mockBlockStore) LoadBlock(height int64) *types.Block { return bs.chain
 func (bs *mockBlockStore) LoadBlockMeta(height int64) *types.BlockMeta {
 	block := bs.chain[height-1]
 	return &types.BlockMeta{
-		BlockID: types.BlockID{block.Hash(), block.MakePartSet(types.BlockPartSizeBytes).Header()},
+		BlockID: EventBlockID{block.Hash(), block.MakePartSet(types.BlockPartSizeBytes).Header()},
 		Header:  block.Header,
 	}
 }

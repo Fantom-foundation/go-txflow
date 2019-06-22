@@ -10,6 +10,7 @@ import (
 
 	"github.com/tendermint/tendermint/crypto"
 	"github.com/tendermint/tendermint/crypto/merkle"
+	"github.com/tendermint/tendermint/crypto/tmhash"
 	cmn "github.com/tendermint/tendermint/libs/common"
 	"github.com/tendermint/tendermint/types"
 	"github.com/tendermint/tendermint/version"
@@ -33,18 +34,16 @@ const (
 
 // EventBlock defines the atomic unit of a aBFT blockchain.
 type EventBlock struct {
-	mtx              sync.Mutex
-	Header           `json:"header"`
-	types.Data       `json:"data"`
-	Evidence         types.EvidenceData `json:"evidence"`
-	SelfEventBlockID types.BlockID      `json:"self_event_block_id"`
-	EventBlockIDs    []types.BlockID    `json:"block_ids"`
+	mtx        sync.Mutex
+	Header     `json:"header"`
+	types.Data `json:"data"`
+	Evidence   types.EvidenceData `json:"evidence"`
 }
 
 // MakeEventBlock returns a new event block with an empty header, except what can be
 // computed from itself.
 // It populates the same set of fields validated by ValidateBasic.
-func MakeEventBlock(height int64, txs []types.Tx, evidence []types.Evidence, eventBlockIDs []types.BlockID) *EventBlock {
+func MakeEventBlock(height int64, txs []types.Tx, evidence []types.Evidence) *EventBlock {
 	block := &EventBlock{
 		Header: Header{
 			Height: height,
@@ -53,8 +52,7 @@ func MakeEventBlock(height int64, txs []types.Tx, evidence []types.Evidence, eve
 		Data: types.Data{
 			Txs: txs,
 		},
-		Evidence:      types.EvidenceData{Evidence: evidence},
-		EventBlockIDs: eventBlockIDs,
+		Evidence: types.EvidenceData{Evidence: evidence},
 	}
 	block.fillHeader()
 	return block
@@ -335,10 +333,10 @@ type Header struct {
 	TotalTxs int64             `json:"total_txs"`
 
 	// self prev block info
-	SelfLastEventBlockID types.BlockID `json:"self_last_block_id"`
+	SelfLastEventBlockID EventBlockID `json:"self_last_block_id"`
 
 	// prev block info
-	LastEventBlockIDs []types.BlockID `json:"last_block_ids"`
+	LastEventBlockIDs []EventBlockID `json:"last_block_ids"`
 
 	// hashes of block data
 	DataHash cmn.HexBytes `json:"data_hash"` // transactions
@@ -356,15 +354,21 @@ type Header struct {
 // Populate the Header with state-derived data.
 // Call this after MakeBlock to complete the Header.
 func (h *Header) Populate(
-	version version.Consensus, chainID string,
-	timestamp time.Time, lastEventBlockIDs []types.BlockID, totalTxs int64,
-	valHash, nextValHash []byte,
+	version version.Consensus,
+	chainID string,
+	timestamp time.Time,
+	selfLastEventBlockID EventBlockID,
+	lastEventBlockIDs []EventBlockID,
+	totalTxs int64,
+	valHash,
+	nextValHash []byte,
 	consensusHash,
 	proposerAddress types.Address,
 ) {
 	h.Version = version
 	h.ChainID = chainID
 	h.Time = timestamp
+	h.SelfLastEventBlockID = selfLastEventBlockID
 	h.LastEventBlockIDs = lastEventBlockIDs
 	h.TotalTxs = totalTxs
 	h.ValidatorsHash = valHash
@@ -435,4 +439,43 @@ func (h *Header) StringIndented(indent string) string {
 		indent, h.EvidenceHash,
 		indent, h.ProposerAddress,
 		indent, h.Hash())
+}
+
+// EventBlockID defines the unique ID of a block as its Hash
+type EventBlockID struct {
+	Hash cmn.HexBytes `json:"hash"`
+}
+
+// Equals returns true if the BlockID matches the given BlockID
+func (blockID EventBlockID) Equals(other EventBlockID) bool {
+	return bytes.Equal(blockID.Hash, other.Hash)
+}
+
+// Key returns a machine-readable string representation of the BlockID
+func (blockID EventBlockID) Key() string {
+	return string(blockID.Hash)
+}
+
+// ValidateBasic performs basic validation.
+func (blockID EventBlockID) ValidateBasic() error {
+	// Hash can be empty in case of POLBlockID in Proposal.
+	if err := types.ValidateHash(blockID.Hash); err != nil {
+		return fmt.Errorf("Wrong Hash")
+	}
+	return nil
+}
+
+// IsZero returns true if this is the BlockID of a nil block.
+func (blockID EventBlockID) IsZero() bool {
+	return len(blockID.Hash) == 0
+}
+
+// IsComplete returns true if this is a valid BlockID of a non-nil block.
+func (blockID EventBlockID) IsComplete() bool {
+	return len(blockID.Hash) == tmhash.Size
+}
+
+// String returns a human readable string representation of the BlockID
+func (blockID EventBlockID) String() string {
+	return fmt.Sprintf(`%v`, blockID.Hash)
 }

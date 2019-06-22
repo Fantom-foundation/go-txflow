@@ -1587,7 +1587,7 @@ type VoteSetMaj23Message struct {
 	Height  int64
 	Round   int
 	Type    types.SignedMsgType
-	BlockID types.BlockID
+	BlockID EventBlockID
 }
 
 // ValidateBasic performs basic validation.
@@ -1619,7 +1619,7 @@ type VoteSetBitsMessage struct {
 	Height  int64
 	Round   int
 	Type    types.SignedMsgType
-	BlockID types.BlockID
+	BlockID EventBlockID
 	Votes   *cmn.BitArray
 }
 

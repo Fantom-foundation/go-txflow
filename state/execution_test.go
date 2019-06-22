@@ -41,7 +41,7 @@ func TestApplyBlock(t *testing.T) {
 		MockMempool{}, MockEvidencePool{})
 
 	block := makeBlock(state, 1)
-	blockID := types.BlockID{block.Hash(), block.MakePartSet(testPartSize).Header()}
+	blockID := EventBlockID{block.Hash(), block.MakePartSet(testPartSize).Header()}
 
 	//nolint:ineffassign
 	state, err = blockExec.ApplyBlock(state, blockID, block)
@@ -63,7 +63,7 @@ func TestBeginBlockValidators(t *testing.T) {
 
 	prevHash := state.LastBlockID.Hash
 	prevParts := types.PartSetHeader{}
-	prevBlockID := types.BlockID{prevHash, prevParts}
+	prevBlockID := EventBlockID{prevHash, prevParts}
 
 	now := tmtime.Now()
 	commitSig0 := (&types.Vote{ValidatorIndex: 0, Timestamp: now, Type: types.PrecommitType}).CommitSig()
@@ -116,7 +116,7 @@ func TestBeginBlockByzantineValidators(t *testing.T) {
 
 	prevHash := state.LastBlockID.Hash
 	prevParts := types.PartSetHeader{}
-	prevBlockID := types.BlockID{prevHash, prevParts}
+	prevBlockID := EventBlockID{prevHash, prevParts}
 
 	height1, idx1, val1 := int64(8), 0, state.Validators.Validators[0].Address
 	height2, idx2, val2 := int64(3), 1, state.Validators.Validators[1].Address
@@ -322,7 +322,7 @@ func TestEndBlockValidatorUpdates(t *testing.T) {
 	require.NoError(t, err)
 
 	block := makeBlock(state, 1)
-	blockID := types.BlockID{block.Hash(), block.MakePartSet(testPartSize).Header()}
+	blockID := EventBlockID{block.Hash(), block.MakePartSet(testPartSize).Header()}
 
 	pubkey := ed25519.GenPrivKey().PubKey()
 	app.ValidatorUpdates = []abci.ValidatorUpdate{
@@ -370,7 +370,7 @@ func TestEndBlockValidatorUpdatesResultingInEmptySet(t *testing.T) {
 	blockExec := NewBlockExecutor(stateDB, log.TestingLogger(), proxyApp.Consensus(), MockMempool{}, MockEvidencePool{})
 
 	block := makeBlock(state, 1)
-	blockID := types.BlockID{block.Hash(), block.MakePartSet(testPartSize).Header()}
+	blockID := EventBlockID{block.Hash(), block.MakePartSet(testPartSize).Header()}
 
 	// Remove the only validator
 	app.ValidatorUpdates = []abci.ValidatorUpdate{

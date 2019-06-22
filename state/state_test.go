@@ -403,7 +403,7 @@ func TestProposerPriorityDoesNotGetResetToZero(t *testing.T) {
 	assert.EqualValues(t, 0, val1.ProposerPriority)
 
 	block := makeBlock(state, state.LastBlockHeight+1)
-	blockID := types.BlockID{block.Hash(), block.MakePartSet(testPartSize).Header()}
+	blockID := EventBlockID{block.Hash(), block.MakePartSet(testPartSize).Header()}
 	abciResponses := &ABCIResponses{
 		EndBlock: &abci.ResponseEndBlock{ValidatorUpdates: nil},
 	}
@@ -513,7 +513,7 @@ func TestProposerPriorityProposerAlternates(t *testing.T) {
 	assert.Equal(t, val1PubKey.Address(), state.Validators.Proposer.Address)
 
 	block := makeBlock(state, state.LastBlockHeight+1)
-	blockID := types.BlockID{block.Hash(), block.MakePartSet(testPartSize).Header()}
+	blockID := EventBlockID{block.Hash(), block.MakePartSet(testPartSize).Header()}
 	// no updates:
 	abciResponses := &ABCIResponses{
 		EndBlock: &abci.ResponseEndBlock{ValidatorUpdates: nil},
@@ -666,7 +666,7 @@ func TestLargeGenesisValidator(t *testing.T) {
 		require.NoError(t, err)
 
 		block := makeBlock(oldState, oldState.LastBlockHeight+1)
-		blockID := types.BlockID{block.Hash(), block.MakePartSet(testPartSize).Header()}
+		blockID := EventBlockID{block.Hash(), block.MakePartSet(testPartSize).Header()}
 
 		updatedState, err := updateState(oldState, blockID, &block.Header, abciResponses, validatorUpdates)
 		require.NoError(t, err)
@@ -692,7 +692,7 @@ func TestLargeGenesisValidator(t *testing.T) {
 		EndBlock: &abci.ResponseEndBlock{ValidatorUpdates: []abci.ValidatorUpdate{firstAddedVal}},
 	}
 	block := makeBlock(oldState, oldState.LastBlockHeight+1)
-	blockID := types.BlockID{block.Hash(), block.MakePartSet(testPartSize).Header()}
+	blockID := EventBlockID{block.Hash(), block.MakePartSet(testPartSize).Header()}
 	updatedState, err := updateState(oldState, blockID, &block.Header, abciResponses, validatorUpdates)
 	require.NoError(t, err)
 
@@ -706,7 +706,7 @@ func TestLargeGenesisValidator(t *testing.T) {
 		require.NoError(t, err)
 
 		block := makeBlock(lastState, lastState.LastBlockHeight+1)
-		blockID := types.BlockID{block.Hash(), block.MakePartSet(testPartSize).Header()}
+		blockID := EventBlockID{block.Hash(), block.MakePartSet(testPartSize).Header()}
 
 		updatedStateInner, err := updateState(lastState, blockID, &block.Header, abciResponses, validatorUpdates)
 		require.NoError(t, err)
@@ -737,7 +737,7 @@ func TestLargeGenesisValidator(t *testing.T) {
 			EndBlock: &abci.ResponseEndBlock{ValidatorUpdates: []abci.ValidatorUpdate{addedVal}},
 		}
 		block := makeBlock(oldState, oldState.LastBlockHeight+1)
-		blockID := types.BlockID{block.Hash(), block.MakePartSet(testPartSize).Header()}
+		blockID := EventBlockID{block.Hash(), block.MakePartSet(testPartSize).Header()}
 		state, err = updateState(state, blockID, &block.Header, abciResponses, validatorUpdates)
 		require.NoError(t, err)
 	}
@@ -749,7 +749,7 @@ func TestLargeGenesisValidator(t *testing.T) {
 		EndBlock: &abci.ResponseEndBlock{ValidatorUpdates: []abci.ValidatorUpdate{removeGenesisVal}},
 	}
 	block = makeBlock(oldState, oldState.LastBlockHeight+1)
-	blockID = types.BlockID{block.Hash(), block.MakePartSet(testPartSize).Header()}
+	blockID = EventBlockID{block.Hash(), block.MakePartSet(testPartSize).Header()}
 	validatorUpdates, err = types.PB2TM.ValidatorUpdates(abciResponses.EndBlock.ValidatorUpdates)
 	require.NoError(t, err)
 	updatedState, err = updateState(state, blockID, &block.Header, abciResponses, validatorUpdates)
@@ -769,7 +769,7 @@ func TestLargeGenesisValidator(t *testing.T) {
 		validatorUpdates, err = types.PB2TM.ValidatorUpdates(abciResponses.EndBlock.ValidatorUpdates)
 		require.NoError(t, err)
 		block = makeBlock(curState, curState.LastBlockHeight+1)
-		blockID = types.BlockID{block.Hash(), block.MakePartSet(testPartSize).Header()}
+		blockID = EventBlockID{block.Hash(), block.MakePartSet(testPartSize).Header()}
 		curState, err = updateState(curState, blockID, &block.Header, abciResponses, validatorUpdates)
 		require.NoError(t, err)
 		if !bytes.Equal(curState.Validators.Proposer.Address, curState.NextValidators.Proposer.Address) {
@@ -793,7 +793,7 @@ func TestLargeGenesisValidator(t *testing.T) {
 		require.NoError(t, err)
 
 		block := makeBlock(updatedState, updatedState.LastBlockHeight+1)
-		blockID := types.BlockID{block.Hash(), block.MakePartSet(testPartSize).Header()}
+		blockID := EventBlockID{block.Hash(), block.MakePartSet(testPartSize).Header()}
 
 		updatedState, err = updateState(updatedState, blockID, &block.Header, abciResponses, validatorUpdates)
 		require.NoError(t, err)
@@ -1014,7 +1014,7 @@ func TestApplyUpdates(t *testing.T) {
 }
 
 func makeHeaderPartsResponsesValPubKeyChange(state State, height int64,
-	pubkey crypto.PubKey) (types.Header, types.BlockID, *state.ABCIResponses) {
+	pubkey crypto.PubKey) (types.Header, EventBlockID, *state.ABCIResponses) {
 
 	block := makeBlock(state, state.LastBlockHeight+1)
 	abciResponses := &ABCIResponses{
@@ -1032,11 +1032,11 @@ func makeHeaderPartsResponsesValPubKeyChange(state State, height int64,
 		}
 	}
 
-	return block.Header, types.BlockID{block.Hash(), types.PartSetHeader{}}, abciResponses
+	return block.Header, EventBlockID{block.Hash(), types.PartSetHeader{}}, abciResponses
 }
 
 func makeHeaderPartsResponsesValPowerChange(state State, height int64,
-	power int64) (types.Header, types.BlockID, *state.ABCIResponses) {
+	power int64) (types.Header, EventBlockID, *state.ABCIResponses) {
 
 	block := makeBlock(state, state.LastBlockHeight+1)
 	abciResponses := &ABCIResponses{
@@ -1053,17 +1053,17 @@ func makeHeaderPartsResponsesValPowerChange(state State, height int64,
 		}
 	}
 
-	return block.Header, types.BlockID{block.Hash(), types.PartSetHeader{}}, abciResponses
+	return block.Header, EventBlockID{block.Hash(), types.PartSetHeader{}}, abciResponses
 }
 
 func makeHeaderPartsResponsesParams(state State, height int64,
-	params types.ConsensusParams) (types.Header, types.BlockID, *ABCIResponses) {
+	params types.ConsensusParams) (types.Header, EventBlockID, *ABCIResponses) {
 
 	block := makeBlock(state, state.LastBlockHeight+1)
 	abciResponses := &ABCIResponses{
 		EndBlock: &abci.ResponseEndBlock{ConsensusParamUpdates: types.TM2PB.ConsensusParams(&params)},
 	}
-	return block.Header, types.BlockID{block.Hash(), types.PartSetHeader{}}, abciResponses
+	return block.Header, EventBlockID{block.Hash(), types.PartSetHeader{}}, abciResponses
 }
 
 type paramsChangeTestCase struct {

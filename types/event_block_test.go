@@ -28,7 +28,6 @@ func TestMain(m *testing.M) {
 
 func TestEventBlockAddEvidence(t *testing.T) {
 	txs := []types.Tx{types.Tx("foo"), types.Tx("bar")}
-	lastID := makeBlockIDRandom()
 	h := int64(3)
 
 	_, valSet, _ := randVoteSet(h-1, 1, types.PrecommitType, 10, 1)
@@ -36,7 +35,7 @@ func TestEventBlockAddEvidence(t *testing.T) {
 	ev := types.NewMockGoodEvidence(h, 0, valSet.Validators[0].Address)
 	evList := []types.Evidence{ev}
 
-	block := MakeEventBlock(h, txs, evList, []types.BlockID{lastID})
+	block := MakeEventBlock(h, txs, evList)
 	require.NotNil(t, block)
 	require.Equal(t, 1, len(block.Evidence.Evidence))
 	require.NotNil(t, block.EvidenceHash)
@@ -46,7 +45,6 @@ func TestEventBlockValidateBasic(t *testing.T) {
 	require.Error(t, (*EventBlock)(nil).ValidateBasic())
 
 	txs := []types.Tx{types.Tx("foo"), types.Tx("bar")}
-	lastID := makeBlockIDRandom()
 	h := int64(3)
 
 	_, valSet, _ := randVoteSet(h-1, 1, types.PrecommitType, 10, 1)
@@ -76,7 +74,7 @@ func TestEventBlockValidateBasic(t *testing.T) {
 	}
 	for i, tc := range testCases {
 		t.Run(tc.testName, func(t *testing.T) {
-			block := MakeEventBlock(h, txs, evList, []types.BlockID{lastID})
+			block := MakeEventBlock(h, txs, evList)
 			block.ProposerAddress = valSet.GetProposer().Address
 			tc.malleateBlock(block)
 			err := block.ValidateBasic()
@@ -87,13 +85,13 @@ func TestEventBlockValidateBasic(t *testing.T) {
 
 func TestEventBlockHash(t *testing.T) {
 	assert.Nil(t, (*EventBlock)(nil).Hash())
-	assert.Nil(t, MakeEventBlock(int64(3), []types.Tx{types.Tx("Hello World")}, nil, nil).Hash())
+	assert.Nil(t, MakeEventBlock(int64(3), []types.Tx{types.Tx("Hello World")}, nil).Hash())
 }
 
 func TestEventBlockMakePartSet(t *testing.T) {
 	assert.Nil(t, (*EventBlock)(nil).MakePartSet(2))
 
-	partSet := MakeEventBlock(int64(3), []types.Tx{types.Tx("Hello World")}, nil, nil).MakePartSet(1024)
+	partSet := MakeEventBlock(int64(3), []types.Tx{types.Tx("Hello World")}, nil).MakePartSet(1024)
 	assert.NotNil(t, partSet)
 	assert.Equal(t, 1, partSet.Total())
 }
@@ -101,7 +99,6 @@ func TestEventBlockMakePartSet(t *testing.T) {
 func TestEventBlockMakePartSetWithEvidence(t *testing.T) {
 	assert.Nil(t, (*EventBlock)(nil).MakePartSet(2))
 
-	lastID := makeBlockIDRandom()
 	h := int64(3)
 
 	_, valSet, _ := randVoteSet(h-1, 1, types.PrecommitType, 10, 1)
@@ -109,7 +106,7 @@ func TestEventBlockMakePartSetWithEvidence(t *testing.T) {
 	ev := types.NewMockGoodEvidence(h, 0, valSet.Validators[0].Address)
 	evList := []types.Evidence{ev}
 
-	partSet := MakeEventBlock(h, []types.Tx{types.Tx("Hello World")}, evList, []types.BlockID{lastID}).MakePartSet(1024)
+	partSet := MakeEventBlock(h, []types.Tx{types.Tx("Hello World")}, evList).MakePartSet(1024)
 	assert.NotNil(t, partSet)
 	assert.Equal(t, 1, partSet.Total())
 }
@@ -117,14 +114,13 @@ func TestEventBlockMakePartSetWithEvidence(t *testing.T) {
 func TestEventBlockHashesTo(t *testing.T) {
 	assert.False(t, (*EventBlock)(nil).HashesTo(nil))
 
-	lastID := makeBlockIDRandom()
 	h := int64(3)
 	_, valSet, _ := randVoteSet(h-1, 1, types.PrecommitType, 10, 1)
 
 	ev := types.NewMockGoodEvidence(h, 0, valSet.Validators[0].Address)
 	evList := []types.Evidence{ev}
 
-	block := MakeEventBlock(h, []types.Tx{types.Tx("Hello World")}, evList, []types.BlockID{lastID})
+	block := MakeEventBlock(h, []types.Tx{types.Tx("Hello World")}, evList)
 	block.ValidatorsHash = valSet.Hash()
 	assert.False(t, block.HashesTo([]byte{}))
 	assert.False(t, block.HashesTo([]byte("something else")))
@@ -132,7 +128,7 @@ func TestEventBlockHashesTo(t *testing.T) {
 }
 
 func TestEventBlockSize(t *testing.T) {
-	size := MakeEventBlock(int64(3), []types.Tx{types.Tx("Hello World")}, nil, nil).Size()
+	size := MakeEventBlock(int64(3), []types.Tx{types.Tx("Hello World")}, nil).Size()
 	if size <= 0 {
 		t.Fatal("Size of the block is zero or negative")
 	}
@@ -143,28 +139,21 @@ func TestBlockString(t *testing.T) {
 	assert.Equal(t, "nil-Block", (*EventBlock)(nil).StringIndented(""))
 	assert.Equal(t, "nil-Block", (*EventBlock)(nil).StringShort())
 
-	block := MakeEventBlock(int64(3), []types.Tx{types.Tx("Hello World")}, nil, nil)
+	block := MakeEventBlock(int64(3), []types.Tx{types.Tx("Hello World")}, nil)
 	assert.NotEqual(t, "nil-Block", block.String())
 	assert.NotEqual(t, "nil-Block", block.StringIndented(""))
 	assert.NotEqual(t, "nil-Block", block.StringShort())
 }
 
-func makeBlockIDRandom() types.BlockID {
+func makeBlockIDRandom() EventBlockID {
 	blockHash := make([]byte, tmhash.Size)
-	partSetHash := make([]byte, tmhash.Size)
-	rand.Read(blockHash)   //nolint: gosec
-	rand.Read(partSetHash) //nolint: gosec
-	blockPartsHeader := types.PartSetHeader{123, partSetHash}
-	return types.BlockID{blockHash, blockPartsHeader}
+	rand.Read(blockHash) //nolint: gosec
+	return EventBlockID{blockHash}
 }
 
-func makeBlockID(hash []byte, partSetSize int, partSetHash []byte) types.BlockID {
-	return types.BlockID{
+func makeBlockID(hash []byte) EventBlockID {
+	return EventBlockID{
 		Hash: hash,
-		PartsHeader: types.PartSetHeader{
-			Total: partSetSize,
-			Hash:  partSetHash,
-		},
 	}
 
 }
@@ -202,7 +191,7 @@ func TestMaxHeaderBytes(t *testing.T) {
 		Time:               timestamp,
 		NumTxs:             math.MaxInt64,
 		TotalTxs:           math.MaxInt64,
-		LastEventBlockIDs:  []types.BlockID{makeBlockID(make([]byte, tmhash.Size), math.MaxInt64, make([]byte, tmhash.Size))},
+		LastEventBlockIDs:  []EventBlockID{makeBlockID(make([]byte, tmhash.Size))},
 		DataHash:           tmhash.Sum([]byte("data_hash")),
 		ValidatorsHash:     tmhash.Sum([]byte("validators_hash")),
 		NextValidatorsHash: tmhash.Sum([]byte("next_validators_hash")),
