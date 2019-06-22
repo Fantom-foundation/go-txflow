@@ -17,7 +17,7 @@ import (
 // Mempool defines the mempool interface as used by the ConsensusState.
 // Updates to the mempool need to be synchronized with committing a block
 // so apps can reset their transient state on Commit
-type Mempool interface {
+type Eventpool interface {
 	Lock()
 	Unlock()
 

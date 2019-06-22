@@ -15,7 +15,7 @@ func BenchmarkCheckEvent(b *testing.B) {
 	defer cleanup()
 
 	for i := 0; i < b.N; i++ {
-		event := types.Event{}
+		event := &types.EventBlock{}
 		event.Height = int64(i)
 		eventpool.CheckEvent(event, nil)
 	}
@@ -23,9 +23,9 @@ func BenchmarkCheckEvent(b *testing.B) {
 
 func BenchmarkCacheInsertTime(b *testing.B) {
 	cache := newMapEventsCache(b.N)
-	events := []types.Event{}
+	events := []*types.EventBlock{}
 	for i := 0; i < b.N; i++ {
-		events[i] = types.Event{}
+		events[i] = &types.EventBlock{}
 		events[i].Height = int64(i)
 	}
 	b.ResetTimer()
@@ -38,9 +38,9 @@ func BenchmarkCacheInsertTime(b *testing.B) {
 // events in parallel, which may cause some overhead due to mutex locking.
 func BenchmarkCacheRemoveTime(b *testing.B) {
 	cache := newMapEventsCache(b.N)
-	events := []types.Event{}
+	events := []*types.EventBlock{}
 	for i := 0; i < b.N; i++ {
-		events[i] = types.Event{}
+		events[i] = &types.EventBlock{}
 		events[i].Height = int64(i)
 		cache.Push(events[i])
 	}

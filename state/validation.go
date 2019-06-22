@@ -5,158 +5,119 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/andrecronje/babble-abci/types"
 	"github.com/tendermint/tendermint/crypto"
 	dbm "github.com/tendermint/tendermint/libs/db"
-	"github.com/tendermint/tendermint/types"
+	ttypes "github.com/tendermint/tendermint/types"
 )
 
 //-----------------------------------------------------
 // Validate block
 
-func validateBlock(evidencePool EvidencePool, stateDB dbm.DB, state State, block *types.Block) error {
+func validateEventBlock(evidencePool EvidencePool, stateDB dbm.DB, state State, eventBlock *types.EventBlock) error {
 	// Validate internal consistency.
-	if err := block.ValidateBasic(); err != nil {
+	if err := eventBlock.ValidateBasic(); err != nil {
 		return err
 	}
 
 	// Validate basic info.
-	if block.Version != state.Version.Consensus {
-		return fmt.Errorf("Wrong Block.Header.Version. Expected %v, got %v",
+	if eventBlock.Version != state.Version.Consensus {
+		return fmt.Errorf("Wrong EventBlock.Header.Version. Expected %v, got %v",
 			state.Version.Consensus,
-			block.Version,
+			eventBlock.Version,
 		)
 	}
-	if block.ChainID != state.ChainID {
-		return fmt.Errorf("Wrong Block.Header.ChainID. Expected %v, got %v",
+	if eventBlock.ChainID != state.ChainID {
+		return fmt.Errorf("Wrong EventBlock.Header.ChainID. Expected %v, got %v",
 			state.ChainID,
-			block.ChainID,
+			eventBlock.ChainID,
 		)
 	}
-	if block.Height != state.LastBlockHeight+1 {
-		return fmt.Errorf("Wrong Block.Header.Height. Expected %v, got %v",
+	if eventBlock.Height != state.LastBlockHeight+1 {
+		return fmt.Errorf("Wrong EventBlock.Header.Height. Expected %v, got %v",
 			state.LastBlockHeight+1,
-			block.Height,
+			eventBlock.Height,
 		)
 	}
 
 	// Validate prev block info.
-	if !block.LastBlockID.Equals(state.LastBlockID) {
-		return fmt.Errorf("Wrong Block.Header.LastBlockID.  Expected %v, got %v",
-			state.LastBlockID,
-			block.LastBlockID,
+	if !eventBlock.SelfEventBlockID.Equals(state.SelfEventBlockID) {
+		return fmt.Errorf("Wrong EventBlock.Header.LastBlockID.  Expected %v, got %v",
+			state.SelfEventBlockID,
+			eventBlock.SelfEventBlockID,
 		)
 	}
 
-	newTxs := int64(len(block.Data.Txs))
-	if block.TotalTxs != state.LastBlockTotalTx+newTxs {
-		return fmt.Errorf("Wrong Block.Header.TotalTxs. Expected %v, got %v",
+	newTxs := int64(len(eventBlock.Data.Txs))
+	if eventBlock.TotalTxs != state.LastBlockTotalTx+newTxs {
+		return fmt.Errorf("Wrong EventBlock.Header.TotalTxs. Expected %v, got %v",
 			state.LastBlockTotalTx+newTxs,
-			block.TotalTxs,
+			eventBlock.TotalTxs,
 		)
 	}
 
-	// Validate app info
-	if !bytes.Equal(block.AppHash, state.AppHash) {
-		return fmt.Errorf("Wrong Block.Header.AppHash.  Expected %X, got %v",
-			state.AppHash,
-			block.AppHash,
-		)
-	}
-	if !bytes.Equal(block.ConsensusHash, state.ConsensusParams.Hash()) {
-		return fmt.Errorf("Wrong Block.Header.ConsensusHash.  Expected %X, got %v",
+	if !bytes.Equal(eventBlock.ConsensusHash, state.ConsensusParams.Hash()) {
+		return fmt.Errorf("Wrong EventBlock.Header.ConsensusHash.  Expected %X, got %v",
 			state.ConsensusParams.Hash(),
-			block.ConsensusHash,
+			eventBlock.ConsensusHash,
 		)
 	}
-	if !bytes.Equal(block.LastResultsHash, state.LastResultsHash) {
-		return fmt.Errorf("Wrong Block.Header.LastResultsHash.  Expected %X, got %v",
-			state.LastResultsHash,
-			block.LastResultsHash,
-		)
-	}
-	if !bytes.Equal(block.ValidatorsHash, state.Validators.Hash()) {
-		return fmt.Errorf("Wrong Block.Header.ValidatorsHash.  Expected %X, got %v",
+	if !bytes.Equal(eventBlock.ValidatorsHash, state.Validators.Hash()) {
+		return fmt.Errorf("Wrong EventBlock.Header.ValidatorsHash.  Expected %X, got %v",
 			state.Validators.Hash(),
-			block.ValidatorsHash,
+			eventBlock.ValidatorsHash,
 		)
 	}
-	if !bytes.Equal(block.NextValidatorsHash, state.NextValidators.Hash()) {
-		return fmt.Errorf("Wrong Block.Header.NextValidatorsHash.  Expected %X, got %v",
+	if !bytes.Equal(eventBlock.NextValidatorsHash, state.NextValidators.Hash()) {
+		return fmt.Errorf("Wrong EventBlock.Header.NextValidatorsHash.  Expected %X, got %v",
 			state.NextValidators.Hash(),
-			block.NextValidatorsHash,
+			eventBlock.NextValidatorsHash,
 		)
-	}
-
-	// Validate block LastCommit.
-	if block.Height == 1 {
-		if len(block.LastCommit.Precommits) != 0 {
-			return errors.New("Block at height 1 can't have LastCommit precommits")
-		}
-	} else {
-		if len(block.LastCommit.Precommits) != state.LastValidators.Size() {
-			return fmt.Errorf("Invalid block commit size. Expected %v, got %v",
-				state.LastValidators.Size(),
-				len(block.LastCommit.Precommits),
-			)
-		}
-		err := state.LastValidators.VerifyCommit(
-			state.ChainID, state.LastBlockID, block.Height-1, block.LastCommit)
-		if err != nil {
-			return err
-		}
 	}
 
 	// Validate block Time
-	if block.Height > 1 {
-		if !block.Time.After(state.LastBlockTime) {
-			return fmt.Errorf("Block time %v not greater than last block time %v",
-				block.Time,
+	if eventBlock.Height > 1 {
+		if !eventBlock.Time.After(state.LastBlockTime) {
+			return fmt.Errorf("EventBlock time %v not greater than last EventBlock time %v",
+				eventBlock.Time,
 				state.LastBlockTime,
 			)
 		}
-
-		medianTime := MedianTime(block.LastCommit, state.LastValidators)
-		if !block.Time.Equal(medianTime) {
-			return fmt.Errorf("Invalid block time. Expected %v, got %v",
-				medianTime,
-				block.Time,
-			)
-		}
-	} else if block.Height == 1 {
+	} else if eventBlock.Height == 1 {
 		genesisTime := state.LastBlockTime
-		if !block.Time.Equal(genesisTime) {
-			return fmt.Errorf("Block time %v is not equal to genesis time %v",
-				block.Time,
+		if !eventBlock.Time.Equal(genesisTime) {
+			return fmt.Errorf("EventBlock time %v is not equal to genesis time %v",
+				eventBlock.Time,
 				genesisTime,
 			)
 		}
 	}
 
 	// Limit the amount of evidence
-	maxNumEvidence, _ := types.MaxEvidencePerBlock(state.ConsensusParams.Block.MaxBytes)
-	numEvidence := int64(len(block.Evidence.Evidence))
+	maxNumEvidence, _ := ttypes.MaxEvidencePerBlock(state.ConsensusParams.Block.MaxBytes)
+	numEvidence := int64(len(eventBlock.Evidence.Evidence))
 	if numEvidence > maxNumEvidence {
-		return types.NewErrEvidenceOverflow(maxNumEvidence, numEvidence)
+		return ttypes.NewErrEvidenceOverflow(maxNumEvidence, numEvidence)
 
 	}
 
 	// Validate all evidence.
-	for _, ev := range block.Evidence.Evidence {
+	for _, ev := range eventBlock.Evidence.Evidence {
 		if err := VerifyEvidence(stateDB, state, ev); err != nil {
-			return types.NewErrEvidenceInvalid(ev, err)
+			return ttypes.NewErrEvidenceInvalid(ev, err)
 		}
 		if evidencePool != nil && evidencePool.IsCommitted(ev) {
-			return types.NewErrEvidenceInvalid(ev, errors.New("evidence was already committed"))
+			return ttypes.NewErrEvidenceInvalid(ev, errors.New("evidence was already committed"))
 		}
 	}
 
 	// NOTE: We can't actually verify it's the right proposer because we dont
 	// know what round the block was first proposed. So just check that it's
 	// a legit address and a known validator.
-	if len(block.ProposerAddress) != crypto.AddressSize ||
-		!state.Validators.HasAddress(block.ProposerAddress) {
-		return fmt.Errorf("Block.Header.ProposerAddress, %X, is not a validator",
-			block.ProposerAddress,
+	if len(eventBlock.ProposerAddress) != crypto.AddressSize ||
+		!state.Validators.HasAddress(eventBlock.ProposerAddress) {
+		return fmt.Errorf("EventBlock.Header.ProposerAddress, %X, is not a validator",
+			eventBlock.ProposerAddress,
 		)
 	}
 
@@ -168,7 +129,7 @@ func validateBlock(evidencePool EvidencePool, stateDB dbm.DB, state State, block
 // - it is from a key who was a validator at the given height
 // - it is internally consistent
 // - it was properly signed by the alleged equivocator
-func VerifyEvidence(stateDB dbm.DB, state State, evidence types.Evidence) error {
+func VerifyEvidence(stateDB dbm.DB, state State, evidence ttypes.Evidence) error {
 	height := state.LastBlockHeight
 
 	evidenceAge := height - evidence.Height()

@@ -293,7 +293,7 @@ func decodeMsg(bz []byte) (msg EventpoolMessage, err error) {
 
 // EventMessage is a EventpoolMessage containing a events.
 type EventMessage struct {
-	Event types.Event
+	Event *types.EventBlock
 }
 
 // String returns a string representation of the EventMessage.

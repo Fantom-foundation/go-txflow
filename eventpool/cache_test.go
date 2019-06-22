@@ -13,10 +13,10 @@ import (
 func TestCacheRemove(t *testing.T) {
 	cache := newMapEventsCache(100)
 	numEvents := 10
-	events := make([]types.Event, numEvents)
+	events := make([]*types.EventBlock, numEvents)
 	for i := 0; i < numEvents; i++ {
 		// probability of collision is 2**-256
-		events[i] = types.Event{}
+		events[i] = &types.EventBlock{}
 		events[i].Height = int64(i)
 		cache.Push(events[i])
 		// make sure its added to both the linked list and the map
@@ -53,22 +53,22 @@ func TestCacheAfterUpdate(t *testing.T) {
 	}
 	for tcIndex, tc := range tests {
 		for i := 0; i < tc.numEventsToCreate; i++ {
-			event := types.Event{}
+			event := &types.EventBlock{}
 			event.Height = int64(i)
 			err := eventpool.CheckEvent(event, nil)
 			require.NoError(t, err)
 		}
 
-		updateEvents := []types.Event{}
+		updateEvents := []*types.EventBlock{}
 		for _, v := range tc.updateIndices {
-			event := types.Event{}
+			event := &types.EventBlock{}
 			event.Height = int64(v)
 			updateEvents = append(updateEvents, event)
 		}
 		eventpool.Update(int64(tcIndex), updateEvents)
 
 		for _, v := range tc.reAddIndices {
-			event := types.Event{}
+			event := &types.EventBlock{}
 			event.Height = int64(v)
 			_ = eventpool.CheckEvent(event, nil)
 		}

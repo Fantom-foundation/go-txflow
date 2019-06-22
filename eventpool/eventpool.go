@@ -21,7 +21,7 @@ import (
 // PreCheckFunc is an optional filter executed before CheckTx and rejects
 // transaction if false is returned. An example would be to ensure that a
 // transaction doesn't exceeded the block size.
-type PreCheckFunc func(types.Event) error
+type PreCheckFunc func(types.EventBlock) error
 
 // EventInfo are parameters that get passed when attempting to add a event to the
 // mempool.
@@ -71,12 +71,12 @@ func IsPreCheckError(err error) bool {
 }
 
 // EventID is the hex encoded hash of the event.
-func EventID(event types.Event) string {
-	return event.Hex()
+func EventID(event *types.EventBlock) string {
+	return fmt.Sprintf("%X", event.Hash())
 }
 
 // eventKey is the fixed length array sha256 hash used as the key in maps.
-func eventKey(event types.Event) [sha256.Size]byte {
+func eventKey(event *types.EventBlock) [sha256.Size]byte {
 	return sha256.Sum256(event.Hash())
 }
 
@@ -244,14 +244,14 @@ func (ep *Eventpool) EventsWaitChan() <-chan struct{} {
 // cb: A callback from the CheckTx command.
 //     It gets called from another goroutine.
 // CONTRACT: Either cb will get called, or err returned.
-func (ep *Eventpool) CheckEvent(event types.Event, cb func(*abci.Response)) (err error) {
+func (ep *Eventpool) CheckEvent(event *types.EventBlock, cb func(*abci.Response)) (err error) {
 	return ep.CheckEventWithInfo(event, cb, EventInfo{PeerID: UnknownPeerID})
 }
 
 // CheckEventWithInfo performs the same operation as CheckEvent, but with extra meta data about the event.
 // Currently this metadata is the peer who sent it,
 // used to prevent the event from being gossiped back to them.
-func (ep *Eventpool) CheckEventWithInfo(event types.Event, cb func(*abci.Response), eventInfo EventInfo) (err error) {
+func (ep *Eventpool) CheckEventWithInfo(event *types.EventBlock, cb func(*abci.Response), eventInfo EventInfo) (err error) {
 	ep.proxyMtx.Lock()
 	// use defer to unlock mutex because application (*local client*) might panic
 	defer ep.proxyMtx.Unlock()
@@ -262,7 +262,7 @@ func (ep *Eventpool) CheckEventWithInfo(event types.Event, cb func(*abci.Respons
 	)
 	//TODO: Check Size
 	if memSize >= ep.config.Size ||
-		int64(len(event.Bytes()))+eventsBytes > ep.config.MaxEventsBytes {
+		int64(event.Size())+eventsBytes > ep.config.MaxEventsBytes {
 		return ErrEventpoolIsFull{
 			memSize, ep.config.Size,
 			eventsBytes, ep.config.MaxEventsBytes}
@@ -271,7 +271,7 @@ func (ep *Eventpool) CheckEventWithInfo(event types.Event, cb func(*abci.Respons
 	// The size of the corresponding amino-encoded EventMessage
 	// can't be larger than the maxMsgSize, otherwise we can't
 	// relay it to peers.
-	if len(event.Bytes()) > maxEventSize {
+	if event.Size() > maxEventSize {
 		return ErrEventTooLarge
 	}
 
@@ -331,18 +331,18 @@ func (ep *Eventpool) CheckEventWithInfo(event types.Event, cb func(*abci.Respons
 func (ep *Eventpool) addEvent(epE *eventpoolEvent) {
 	e := ep.events.PushBack(epE)
 	ep.eventsMap.Store(eventKey(epE.event), e)
-	atomic.AddInt64(&ep.eventsBytes, int64(len(epE.event.Bytes())))
-	ep.metrics.EventSizeBytes.Observe(float64(len(epE.event.Bytes())))
+	atomic.AddInt64(&ep.eventsBytes, int64(epE.event.Size()))
+	ep.metrics.EventSizeBytes.Observe(float64(epE.event.Size()))
 }
 
 // Called from:
 //  - Update (lock held) if event was committed
 // 	- resCbRecheck (lock not held) if event was invalidated
-func (ep *Eventpool) removeEvent(event types.Event, elem *clist.CElement, removeFromCache bool) {
+func (ep *Eventpool) removeEvent(event *types.EventBlock, elem *clist.CElement, removeFromCache bool) {
 	ep.events.Remove(elem)
 	elem.DetachPrev()
 	ep.eventsMap.Delete(eventKey(event))
-	atomic.AddInt64(&ep.eventsBytes, int64(-len(event.Bytes())))
+	atomic.AddInt64(&ep.eventsBytes, int64(-event.Size()))
 
 	if removeFromCache {
 		ep.cache.Remove(event)
@@ -373,7 +373,7 @@ func (ep *Eventpool) notifyEventsAvailable() {
 // ReapMaxEvents reaps up to max events from the eventpool.
 // If max is negative, there is no cap on the size of all returned
 // events (~ all available events).
-func (ep *Eventpool) ReapMaxEvents(max int) []types.Event {
+func (ep *Eventpool) ReapMaxEvents(max int) []*types.EventBlock {
 	ep.proxyMtx.Lock()
 	defer ep.proxyMtx.Unlock()
 
@@ -381,7 +381,7 @@ func (ep *Eventpool) ReapMaxEvents(max int) []types.Event {
 		max = ep.events.Len()
 	}
 
-	events := make([]types.Event, 0, cmn.MinInt(ep.events.Len(), max))
+	events := make([]*types.EventBlock, 0, cmn.MinInt(ep.events.Len(), max))
 	for e := ep.events.Front(); e != nil && len(events) <= max; e = e.Next() {
 		epE := e.Value.(*eventpoolEvent)
 		events = append(events, epE.event)
@@ -394,7 +394,7 @@ func (ep *Eventpool) ReapMaxEvents(max int) []types.Event {
 // NOTE: unsafe; Lock/Unlock must be managed by caller
 func (ep *Eventpool) Update(
 	height int64,
-	events []types.Event,
+	events []*types.EventBlock,
 ) error {
 	// Set height
 	ep.height = height
@@ -419,18 +419,18 @@ func (ep *Eventpool) Update(
 	return nil
 }
 
-func (ep *Eventpool) removeEvents(events []types.Event) []types.Event {
+func (ep *Eventpool) removeEvents(events []*types.EventBlock) []*types.EventBlock {
 	// Build a map for faster lookups.
 	eventsMap := make(map[string]struct{}, len(events))
 	for _, event := range events {
-		eventsMap[event.Hex()] = struct{}{}
+		eventsMap[EventID(event)] = struct{}{}
 	}
 
-	eventsLeft := make([]types.Event, 0, ep.events.Len())
+	eventsLeft := make([]*types.EventBlock, 0, ep.events.Len())
 	for e := ep.events.Front(); e != nil; e = e.Next() {
 		epE := e.Value.(*eventpoolEvent)
 		// Remove the event if it's already in a block.
-		if _, ok := eventsMap[epE.event.Hex()]; ok {
+		if _, ok := eventsMap[EventID(epE.event)]; ok {
 			// NOTE: we don't remove committed events from the cache.
 			ep.removeEvent(epE.event, e, false)
 
@@ -445,9 +445,9 @@ func (ep *Eventpool) removeEvents(events []types.Event) []types.Event {
 
 // eventpoolEvent is a transaction that successfully ran
 type eventpoolEvent struct {
-	height    int64       // height that this tx had been validated in
-	gasWanted int64       // amount of gas this tx states it will require
-	event     types.Event //
+	height    int64             // height that this tx had been validated in
+	gasWanted int64             // amount of gas this tx states it will require
+	event     *types.EventBlock //
 
 	// ids of peers who've sent us this tx (as a map for quick lookups).
 	// senders: PeerID -> bool
@@ -463,8 +463,8 @@ func (epE *eventpoolEvent) Height() int64 {
 
 type eventsCache interface {
 	Reset()
-	Push(event types.Event) bool
-	Remove(event types.Event)
+	Push(event *types.EventBlock) bool
+	Remove(event *types.EventBlock)
 }
 
 // mapEventsCache maintains a LRU cache of events. This only stores the hash
@@ -497,7 +497,7 @@ func (cache *mapEventsCache) Reset() {
 
 // Push adds the given event to the cache and returns true. It returns
 // false if event is already in the cache.
-func (cache *mapEventsCache) Push(event types.Event) bool {
+func (cache *mapEventsCache) Push(event *types.EventBlock) bool {
 	cache.mtx.Lock()
 	defer cache.mtx.Unlock()
 
@@ -522,7 +522,7 @@ func (cache *mapEventsCache) Push(event types.Event) bool {
 }
 
 // Remove removes the given event from the cache.
-func (cache *mapEventsCache) Remove(event types.Event) {
+func (cache *mapEventsCache) Remove(event *types.EventBlock) {
 	cache.mtx.Lock()
 	eventHash := eventKey(event)
 	popped := cache.map_[eventHash]
@@ -538,6 +538,6 @@ type nopEventsCache struct{}
 
 var _ eventsCache = (*nopEventsCache)(nil)
 
-func (nopEventsCache) Reset()                {}
-func (nopEventsCache) Push(types.Event) bool { return true }
-func (nopEventsCache) Remove(types.Event)    {}
+func (nopEventsCache) Reset()                      {}
+func (nopEventsCache) Push(*types.EventBlock) bool { return true }
+func (nopEventsCache) Remove(*types.EventBlock)    {}

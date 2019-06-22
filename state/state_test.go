@@ -16,6 +16,7 @@ import (
 	"github.com/tendermint/tendermint/crypto/ed25519"
 	cmn "github.com/tendermint/tendermint/libs/common"
 	dbm "github.com/tendermint/tendermint/libs/db"
+	"github.com/tendermint/tendermint/state"
 
 	cfg "github.com/tendermint/tendermint/config"
 	"github.com/tendermint/tendermint/types"
@@ -1013,7 +1014,7 @@ func TestApplyUpdates(t *testing.T) {
 }
 
 func makeHeaderPartsResponsesValPubKeyChange(state State, height int64,
-	pubkey crypto.PubKey) (types.Header, types.BlockID, *ABCIResponses) {
+	pubkey crypto.PubKey) (types.Header, types.BlockID, *state.ABCIResponses) {
 
 	block := makeBlock(state, state.LastBlockHeight+1)
 	abciResponses := &ABCIResponses{
@@ -1035,7 +1036,7 @@ func makeHeaderPartsResponsesValPubKeyChange(state State, height int64,
 }
 
 func makeHeaderPartsResponsesValPowerChange(state State, height int64,
-	power int64) (types.Header, types.BlockID, *ABCIResponses) {
+	power int64) (types.Header, types.BlockID, *state.ABCIResponses) {
 
 	block := makeBlock(state, state.LastBlockHeight+1)
 	abciResponses := &ABCIResponses{

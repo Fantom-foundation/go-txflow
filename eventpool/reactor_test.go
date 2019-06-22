@@ -67,7 +67,7 @@ func makeAndConnectEventpoolReactors(cfg *cfg.Config, N int) []*EventpoolReactor
 }
 
 // wait for all events on all reactors
-func waitForEvents(t *testing.T, events []types.Event, reactors []*EventpoolReactor) {
+func waitForEvents(t *testing.T, events []*types.EventBlock, reactors []*EventpoolReactor) {
 	// wait for the events in all eventpools
 	wg := new(sync.WaitGroup)
 	for i := 0; i < len(reactors); i++ {
@@ -90,7 +90,7 @@ func waitForEvents(t *testing.T, events []types.Event, reactors []*EventpoolReac
 }
 
 // wait for all events on a single eventpool
-func _waitForEvents(t *testing.T, wg *sync.WaitGroup, events []types.Event, reactorIdx int, reactors []*EventpoolReactor) {
+func _waitForEvents(t *testing.T, wg *sync.WaitGroup, events []*types.EventBlock, reactorIdx int, reactors []*EventpoolReactor) {
 
 	eventpool := reactors[reactorIdx].Eventpool
 	for eventpool.Size() != len(events) {

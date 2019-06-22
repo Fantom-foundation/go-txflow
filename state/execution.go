@@ -9,6 +9,7 @@ import (
 	"github.com/tendermint/tendermint/libs/fail"
 	"github.com/tendermint/tendermint/libs/log"
 	"github.com/tendermint/tendermint/proxy"
+	tstate "github.com/tendermint/tendermint/state"
 	"github.com/tendermint/tendermint/types"
 )
 
@@ -235,7 +236,7 @@ func execBlockOnProxyApp(
 	block *types.Block,
 	lastValSet *types.ValidatorSet,
 	stateDB dbm.DB,
-) (*ABCIResponses, error) {
+) (*tstate.ABCIResponses, error) {
 	var validTxs, invalidTxs = 0, 0
 
 	txIndex := 0

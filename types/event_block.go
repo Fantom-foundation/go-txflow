@@ -359,7 +359,7 @@ func (h *Header) Populate(
 	version version.Consensus, chainID string,
 	timestamp time.Time, lastEventBlockIDs []types.BlockID, totalTxs int64,
 	valHash, nextValHash []byte,
-	consensusHash, lastResultsHash []byte,
+	consensusHash,
 	proposerAddress types.Address,
 ) {
 	h.Version = version

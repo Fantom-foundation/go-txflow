@@ -65,11 +65,11 @@ func ensureFire(t *testing.T, ch <-chan struct{}, timeoutMS int) {
 	}
 }
 
-func checkEvents(t *testing.T, eventpool *Eventpool, count int, peerID uint16) []types.Event {
-	events := make([]types.Event, count)
+func checkEvents(t *testing.T, eventpool *Eventpool, count int, peerID uint16) []*types.EventBlock {
+	events := make([]*types.EventBlock, count)
 	eventInfo := EventInfo{PeerID: peerID}
 	for i := 0; i < count; i++ {
-		events[i] = types.Event{}
+		events[i] = &types.EventBlock{}
 		events[i].Height = int64(i)
 		if err := eventpool.CheckEventWithInfo(events[i], nil, eventInfo); err != nil {
 			// Skip invalid events.
@@ -89,9 +89,9 @@ func TestEventpoolUpdateAddsEventsToCache(t *testing.T) {
 	cc := proxy.NewLocalClientCreator(app)
 	eventpool, cleanup := newEventpoolWithApp(cc)
 	defer cleanup()
-	event := types.Event{}
+	event := &types.EventBlock{}
 	event.Height = 1
-	eventpool.Update(1, []types.Event{event})
+	eventpool.Update(1, []*types.EventBlock{event})
 	err := eventpool.CheckEvent(event, nil)
 	if assert.Error(t, err) {
 		assert.Equal(t, ErrEventInCache, err)
@@ -161,16 +161,16 @@ func TestSerialReap(t *testing.T) {
 		for i := start; i < end; i++ {
 
 			// This will succeed
-			event := types.Event{}
+			event := &types.EventBlock{}
 			event.Height = int64(i)
 			err := eventpool.CheckEvent(event, nil)
-			_, cached := cacheMap[event.Hex()]
+			_, cached := cacheMap[EventID(event)]
 			if cached {
 				require.NotNil(t, err, "expected error for cached event")
 			} else {
 				require.Nil(t, err, "expected no err for uncached event")
 			}
-			cacheMap[event.Hex()] = struct{}{}
+			cacheMap[EventID(event)] = struct{}{}
 
 			// Duplicates are cached and should return error
 			err = eventpool.CheckEvent(event, nil)
@@ -179,9 +179,9 @@ func TestSerialReap(t *testing.T) {
 	}
 
 	updateRange := func(start, end int) {
-		events := make([]types.Event, 0)
+		events := make([]*types.EventBlock, 0)
 		for i := start; i < end; i++ {
-			event := types.Event{}
+			event := &types.EventBlock{}
 			event.Height = int64(i)
 			events = append(events, event)
 		}
@@ -193,7 +193,7 @@ func TestSerialReap(t *testing.T) {
 	commitRange := func(start, end int) {
 		// Deliver some events.
 		for i := start; i < end; i++ {
-			event := types.Event{}
+			event := &types.EventBlock{}
 			event.Height = int64(i)
 		}
 	}
@@ -239,7 +239,7 @@ func TestEventpoolCloseWAL(t *testing.T) {
 	require.Equal(t, 1, len(m2), "expecting the wal match in")
 
 	// 5. Write some contents to the WAL
-	event := types.Event{}
+	event := &types.EventBlock{}
 	event.Height = 1
 	eventpool.CheckEvent(event, nil)
 	walFilepath := eventpool.wal.Path
@@ -265,8 +265,8 @@ func TestEventpoolCloseWAL(t *testing.T) {
 // Size of the amino encoded EventMessage is the length of the
 // encoded byte array, plus 1 for the struct field, plus 4
 // for the amino prefix.
-func eventMessageSize(event types.Event) int {
-	return amino.ByteSliceSize(event.Bytes()) + 1 + 4
+func eventMessageSize(event *types.EventBlock) int {
+	return amino.ByteSliceSize(cdc.MustMarshalBinaryBare(event)) + 1 + 4
 }
 
 func TestEventpoolMaxMsgSize(t *testing.T) {
@@ -301,8 +301,8 @@ func TestEventpoolMaxMsgSize(t *testing.T) {
 	for i, testCase := range testCases {
 		caseString := fmt.Sprintf("case %d, len %d", i, testCase.len)
 
-		event := types.Event{}
-		event.Transactions = ttypes.Txs{cmn.RandBytes(testCase.len)}
+		event := &types.EventBlock{}
+		event.Data.Txs = ttypes.Txs{cmn.RandBytes(testCase.len)}
 		err := eventpool.CheckEvent(event, nil)
 		msg := &EventMessage{event}
 		encoded := cdc.MustMarshalBinaryBare(msg)
@@ -329,27 +329,14 @@ func TestEventpoolEventsBytes(t *testing.T) {
 	// 1. zero by default
 	assert.EqualValues(t, 0, eventpool.EventsBytes())
 	// 2. len(event) after CheckEvent
-	event := types.Event{}
+	event := &types.EventBlock{}
 	event.Height = 1
 	err := eventpool.CheckEvent(event, nil)
 	require.NoError(t, err)
 	assert.EqualValues(t, 1, eventpool.EventsBytes())
 
 	// 3. zero again after event is removed by Update
-	eventpool.Update(1, []types.Event{event})
-	assert.EqualValues(t, 0, eventpool.EventsBytes())
-
-	// 4. zero after Flush\
-	events := []types.Event{}
-	events[0] = types.Event{}
-	events[0].Height = 2
-	events[1] = types.Event{}
-	events[1].Height = 3
-	err = eventpool.CheckEvent(events[0], nil)
-	require.NoError(t, err)
-	assert.EqualValues(t, 2, eventpool.EventsBytes())
-
-	eventpool.Flush()
+	eventpool.Update(1, []*types.EventBlock{event})
 	assert.EqualValues(t, 0, eventpool.EventsBytes())
 
 	// 6. zero after event is rechecked and removed due to not being valid anymore
@@ -363,7 +350,7 @@ func TestEventpoolEventsBytes(t *testing.T) {
 	assert.EqualValues(t, 8, eventpool.EventsBytes())
 
 	// Pretend like we committed nothing so eventBytes gets rechecked and removed.
-	eventpool.Update(1, []types.Event{})
+	eventpool.Update(1, []*types.EventBlock{})
 	assert.EqualValues(t, 0, eventpool.EventsBytes())
 }
 
@@ -383,9 +370,9 @@ func TestEventpoolRemoteAppConcurrency(t *testing.T) {
 	// generate small number of txs
 	nEvents := 10
 	eventLen := 200
-	events := make([]types.Event, nEvents)
+	events := make([]*types.EventBlock, nEvents)
 	for i := 0; i < nEvents; i++ {
-		events[i].Transactions[0] = cmn.RandBytes(eventLen)
+		events[i].Data.Txs = []ttypes.Tx{cmn.RandBytes(eventLen)}
 	}
 
 	// simulate a group of peers sending them over and over

@@ -6,7 +6,8 @@ import (
 	"io/ioutil"
 	"time"
 
-	"github.com/tendermint/tendermint/types"
+	"github.com/andrecronje/babble-abci/types"
+	ttypes "github.com/tendermint/tendermint/types"
 	tmtime "github.com/tendermint/tendermint/types/time"
 	"github.com/tendermint/tendermint/version"
 )
@@ -55,10 +56,11 @@ type State struct {
 	ChainID string
 
 	// LastBlockHeight=0 at genesis (ie. block(H=0) does not exist)
-	LastBlockHeight  int64
-	LastBlockTotalTx int64
-	LastBlockID      types.BlockID
-	LastBlockTime    time.Time
+	LastEventBlockHeight int64
+	LastSelfEventBlockID ttypes.BlockID
+	LastEventBlockIDs    []ttypes.BlockID
+	LastEventBlockTime   time.Time
+	LastEventBlocks      []types.EventBlock
 
 	// LastValidators is used to validate block.LastCommit.
 	// Validators are persisted to the database separately every time they change,
@@ -66,21 +68,15 @@ type State struct {
 	// Note that if s.LastBlockHeight causes a valset change,
 	// we set s.LastHeightValidatorsChanged = s.LastBlockHeight + 1 + 1
 	// Extra +1 due to nextValSet delay.
-	NextValidators              *types.ValidatorSet
-	Validators                  *types.ValidatorSet
-	LastValidators              *types.ValidatorSet
+	NextValidators              *ttypes.ValidatorSet
+	Validators                  *ttypes.ValidatorSet
+	LastValidators              *ttypes.ValidatorSet
 	LastHeightValidatorsChanged int64
 
 	// Consensus parameters used for validating blocks.
 	// Changes returned by EndBlock and updated after Commit.
-	ConsensusParams                  types.ConsensusParams
+	ConsensusParams                  ttypes.ConsensusParams
 	LastHeightConsensusParamsChanged int64
-
-	// Merkle root of the results from executing prev block
-	LastResultsHash []byte
-
-	// the latest AppHash we've received from calling abci.Commit()
-	AppHash []byte
 }
 
 // Copy makes a copy of the State for mutating.
@@ -89,10 +85,10 @@ func (state State) Copy() State {
 		Version: state.Version,
 		ChainID: state.ChainID,
 
-		LastBlockHeight:  state.LastBlockHeight,
-		LastBlockTotalTx: state.LastBlockTotalTx,
-		LastBlockID:      state.LastBlockID,
-		LastBlockTime:    state.LastBlockTime,
+		LastEventBlockHeight: state.LastEventBlockHeight,
+		LastSelfEventBlockID: state.LastSelfEventBlockID,
+		LastEventBlockIDs:    state.LastEventBlockIDs,
+		LastEventBlockTime:   state.LastEventBlockTime,
 
 		NextValidators:              state.NextValidators.Copy(),
 		Validators:                  state.Validators.Copy(),
@@ -101,10 +97,6 @@ func (state State) Copy() State {
 
 		ConsensusParams:                  state.ConsensusParams,
 		LastHeightConsensusParamsChanged: state.LastHeightConsensusParamsChanged,
-
-		AppHash: state.AppHash,
-
-		LastResultsHash: state.LastResultsHash,
 	}
 }
 
@@ -125,56 +117,55 @@ func (state State) IsEmpty() bool {
 }
 
 //------------------------------------------------------------------------
-// Create a block from the latest state
+// Create an event block from the latest state
 
-// MakeBlock builds a block from the current state with the given txs, commit,
+// MakeEventBlock builds a block from the current state with the given txs,
 // and evidence. Note it also takes a proposerAddress because the state does not
 // track rounds, and hence does not know the correct proposer. TODO: fix this!
-func (state State) MakeBlock(
+func (state State) MakeEventBlock(
 	height int64,
-	txs []types.Tx,
-	commit *types.Commit,
-	evidence []types.Evidence,
+	txs []ttypes.Tx,
+	evidence []ttypes.Evidence,
 	proposerAddress []byte,
-) (*types.Block, *types.PartSet) {
+) (*types.EventBlock, *ttypes.PartSet) {
 
 	// Build base block with block data.
-	block := types.MakeBlock(height, txs, commit, evidence)
+	eventBlock := types.MakeEventBlock(height, txs, evidence)
 
 	// Set time.
 	var timestamp time.Time
 	if height == 1 {
-		timestamp = state.LastBlockTime // genesis time
+		timestamp = state.LastEventBlockTime // genesis time
 	} else {
-		timestamp = MedianTime(commit, state.LastValidators)
+		timestamp = MedianTime(state.LastEventBlocks, state.LastValidators)
 	}
 
 	// Fill rest of header with state data.
-	block.Header.Populate(
+	eventBlock.Header.Populate(
 		state.Version.Consensus, state.ChainID,
-		timestamp, state.LastBlockID, state.LastBlockTotalTx+block.NumTxs,
+		timestamp, state.LastEventBlockIDs, eventBlock.NumTxs,
 		state.Validators.Hash(), state.NextValidators.Hash(),
-		state.ConsensusParams.Hash(), state.AppHash, state.LastResultsHash,
+		state.ConsensusParams.Hash(),
 		proposerAddress,
 	)
 
-	return block, block.MakePartSet(types.BlockPartSizeBytes)
+	return eventBlock, eventBlock.MakePartSet(ttypes.BlockPartSizeBytes)
 }
 
 // MedianTime computes a median time for a given Commit (based on Timestamp field of votes messages) and the
 // corresponding validator set. The computed time is always between timestamps of
 // the votes sent by honest processes, i.e., a faulty processes can not arbitrarily increase or decrease the
 // computed value.
-func MedianTime(commit *types.Commit, validators *types.ValidatorSet) time.Time {
+func MedianTime(eventBlocks []*types.EventBlock, validators *ttypes.ValidatorSet) time.Time {
 
-	weightedTimes := make([]*tmtime.WeightedTime, len(commit.Precommits))
+	weightedTimes := make([]*tmtime.WeightedTime, len(eventBlocks))
 	totalVotingPower := int64(0)
 
-	for i, vote := range commit.Precommits {
-		if vote != nil {
-			_, validator := validators.GetByIndex(vote.ValidatorIndex)
+	for i, eventBlock := range eventBlocks {
+		if eventBlock != nil {
+			_, validator := validators.GetByAddress(eventBlock.ProposerAddress)
 			totalVotingPower += validator.VotingPower
-			weightedTimes[i] = tmtime.NewWeightedTime(vote.Timestamp, validator.VotingPower)
+			weightedTimes[i] = tmtime.NewWeightedTime(eventBlock.Time, validator.VotingPower)
 		}
 	}
 
@@ -197,54 +188,52 @@ func MakeGenesisStateFromFile(genDocFile string) (State, error) {
 }
 
 // MakeGenesisDocFromFile reads and unmarshals genesis doc from the given file.
-func MakeGenesisDocFromFile(genDocFile string) (*types.GenesisDoc, error) {
+func MakeGenesisDocFromFile(genDocFile string) (*ttypes.GenesisDoc, error) {
 	genDocJSON, err := ioutil.ReadFile(genDocFile)
 	if err != nil {
 		return nil, fmt.Errorf("Couldn't read GenesisDoc file: %v", err)
 	}
-	genDoc, err := types.GenesisDocFromJSON(genDocJSON)
+	genDoc, err := ttypes.GenesisDocFromJSON(genDocJSON)
 	if err != nil {
 		return nil, fmt.Errorf("Error reading GenesisDoc: %v", err)
 	}
 	return genDoc, nil
 }
 
-// MakeGenesisState creates state from types.GenesisDoc.
-func MakeGenesisState(genDoc *types.GenesisDoc) (State, error) {
+// MakeGenesisState creates state from ttypes.GenesisDoc.
+func MakeGenesisState(genDoc *ttypes.GenesisDoc) (State, error) {
 	err := genDoc.ValidateAndComplete()
 	if err != nil {
 		return State{}, fmt.Errorf("Error in genesis file: %v", err)
 	}
 
-	var validatorSet, nextValidatorSet *types.ValidatorSet
+	var validatorSet, nextValidatorSet *ttypes.ValidatorSet
 	if genDoc.Validators == nil {
-		validatorSet = types.NewValidatorSet(nil)
-		nextValidatorSet = types.NewValidatorSet(nil)
+		validatorSet = ttypes.NewValidatorSet(nil)
+		nextValidatorSet = ttypes.NewValidatorSet(nil)
 	} else {
-		validators := make([]*types.Validator, len(genDoc.Validators))
+		validators := make([]*ttypes.Validator, len(genDoc.Validators))
 		for i, val := range genDoc.Validators {
-			validators[i] = types.NewValidator(val.PubKey, val.Power)
+			validators[i] = ttypes.NewValidator(val.PubKey, val.Power)
 		}
-		validatorSet = types.NewValidatorSet(validators)
-		nextValidatorSet = types.NewValidatorSet(validators).CopyIncrementProposerPriority(1)
+		validatorSet = ttypes.NewValidatorSet(validators)
+		nextValidatorSet = ttypes.NewValidatorSet(validators).CopyIncrementProposerPriority(1)
 	}
 
 	return State{
 		Version: initStateVersion,
 		ChainID: genDoc.ChainID,
 
-		LastBlockHeight: 0,
-		LastBlockID:     types.BlockID{},
-		LastBlockTime:   genDoc.GenesisTime,
+		LastEventBlockHeight: 0,
+		LastEventBlockIDs:    []ttypes.BlockID{},
+		LastEventBlockTime:   genDoc.GenesisTime,
 
 		NextValidators:              nextValidatorSet,
 		Validators:                  validatorSet,
-		LastValidators:              types.NewValidatorSet(nil),
+		LastValidators:              ttypes.NewValidatorSet(nil),
 		LastHeightValidatorsChanged: 1,
 
 		ConsensusParams:                  *genDoc.ConsensusParams,
 		LastHeightConsensusParamsChanged: 1,
-
-		AppHash: genDoc.AppHash,
 	}, nil
 }
