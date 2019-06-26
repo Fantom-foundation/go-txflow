@@ -352,8 +352,6 @@ func NewNode(config *cfg.Config,
 	eventPoolConfig.MaxEventsBytes = config.Mempool.MaxTxsBytes
 	eventPoolConfig.CacheSize = config.Mempool.CacheSize
 
-	config.Mempool.Broadcast = false
-
 	// Make MempoolReactor
 	mp := mempool.NewMempool(
 		config.Mempool,
