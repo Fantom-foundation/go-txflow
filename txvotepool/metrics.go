@@ -1,4 +1,4 @@
-package mempool
+package txvotepool
 
 import (
 	"github.com/go-kit/kit/metrics"

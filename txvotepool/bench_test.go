@@ -1,4 +1,4 @@
-package mempool
+package txvotepool
 
 import (
 	"encoding/binary"

@@ -1,4 +1,4 @@
-package txpool
+package txvotepool
 
 import (
 	"fmt"
@@ -273,7 +273,7 @@ func decodeMsg(bz []byte) (msg TxpoolMessage, err error) {
 
 //-------------------------------------
 
-// TxMessage is a MempoolMessage containing a transaction.
+// TxMessage is a TxpoolMessage containing a transaction.
 type TxMessage struct {
 	Tx types.Tx
 }

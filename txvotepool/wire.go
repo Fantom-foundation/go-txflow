@@ -1,4 +1,4 @@
-package txpool
+package txvotepool
 
 import (
 	amino "github.com/tendermint/go-amino"
@@ -7,5 +7,5 @@ import (
 var cdc = amino.NewCodec()
 
 func init() {
-	RegisterTxpoolMessages(cdc)
+	RegisterTxVotepoolMessages(cdc)
 }
