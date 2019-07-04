@@ -1,4 +1,4 @@
-package consensus
+package txflow
 
 import (
 	"github.com/go-kit/kit/metrics"

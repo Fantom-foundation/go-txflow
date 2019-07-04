@@ -1,4 +1,4 @@
-package consensus
+package txflow
 
 import (
 	"bytes"
@@ -27,10 +27,7 @@ import (
 // Errors
 
 var (
-	ErrInvalidProposalSignature = errors.New("Error invalid proposal signature")
-	ErrInvalidProposalPOLRound  = errors.New("Error invalid proposal POL round")
-	ErrAddingVote               = errors.New("Error adding vote")
-	ErrVoteHeightMismatch       = errors.New("Error vote height mismatch")
+	ErrAddingVote = errors.New("Error adding vote")
 )
 
 //-----------------------------------------------------------------------------
@@ -41,20 +38,18 @@ var (
 
 // msgs from the reactor which may update the state
 type msgInfo struct {
-	Msg    ConsensusMessage `json:"msg"`
-	PeerID p2p.ID           `json:"peer_key"`
+	Msg    TxFlowMessage `json:"msg"`
+	PeerID p2p.ID        `json:"peer_key"`
 }
 
 // internally generated messages which may update the state
 type timeoutInfo struct {
-	Duration time.Duration         `json:"duration"`
-	Height   int64                 `json:"height"`
-	Round    int                   `json:"round"`
-	Step     cstypes.RoundStepType `json:"step"`
+	Duration time.Duration `json:"duration"`
+	Height   int64         `json:"height"`
 }
 
 func (ti *timeoutInfo) String() string {
-	return fmt.Sprintf("%v ; %d/%d %v", ti.Duration, ti.Height, ti.Round, ti.Step)
+	return fmt.Sprintf("%v ; %d/%d %v", ti.Duration, ti.Height)
 }
 
 // interface to the mempool
@@ -62,38 +57,29 @@ type txNotifier interface {
 	TxsAvailable() <-chan struct{}
 }
 
-// interface to the evidence pool
-type evidencePool interface {
-	AddEvidence(types.Evidence) error
-}
-
-// ConsensusState handles execution of the consensus algorithm.
-// It processes votes and proposals, and upon reaching agreement,
-// commits blocks to the chain and executes them against the application.
+// TxFlowState handles execution of the txflow algorithm.
+// It processes votes, and upon reaching agreement,
+// commits txs and executes them against the application.
 // The internal state machine receives input from peers, the internal validator, and from a timer.
-type ConsensusState struct {
+type TxFlowState struct {
 	cmn.BaseService
 
 	// config details
 	config        *cfg.ConsensusConfig
 	privValidator types.PrivValidator // for signing votes
 
-	// store blocks and commits
-	blockStore sm.BlockStore
+	// store txs and commits
+	txStore TxStore
 
-	// create and execute blocks
-	blockExec *sm.BlockExecutor
+	// create and execute txs
+	txExec *TxExecutor
 
 	// notify us if txs are available
 	txNotifier txNotifier
 
-	// add evidence to the pool
-	// when it's detected
-	evpool evidencePool
-
 	// internal state
 	mtx sync.RWMutex
-	cstypes.RoundState
+	cstypes.TxState
 	state sm.State // State until height-1.
 
 	// state changes may be triggered by: msgs from peers,
@@ -102,7 +88,7 @@ type ConsensusState struct {
 	internalMsgQueue chan msgInfo
 	timeoutTicker    TimeoutTicker
 
-	// information about about added votes and block parts are written on this channel
+	// information about added votes are written on this channel
 	// so statistics can be computed by reactor
 	statsMsgQueue chan msgInfo
 
@@ -120,9 +106,9 @@ type ConsensusState struct {
 	nSteps int
 
 	// some functions can be overwritten for testing
-	decideProposal func(height int64, round int)
-	doPrevote      func(height int64, round int)
-	setProposal    func(proposal *types.Proposal) error
+	decideTx  func(tx *types.Tx)
+	doPrevote func(tx *types.Tx)
+	setTx     func(tx *types.Tx) error
 
 	// closed when we finish shutting down
 	done chan struct{}
@@ -135,11 +121,11 @@ type ConsensusState struct {
 	metrics *Metrics
 }
 
-// StateOption sets an optional parameter on the ConsensusState.
-type StateOption func(*ConsensusState)
+// StateOption sets an optional parameter on the TxFlowState.
+type StateOption func(*TxFlowState)
 
-// NewConsensusState returns a new ConsensusState.
-func NewConsensusState(
+// NewTxFlowState returns a new TxFlowState.
+func NewTxFlowState(
 	config *cfg.ConsensusConfig,
 	state sm.State,
 	blockExec *sm.BlockExecutor,

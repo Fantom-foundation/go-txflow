@@ -1,4 +1,4 @@
-package mempool
+package txvotepool
 
 import (
 	"bytes"
@@ -21,58 +21,20 @@ import (
 	"github.com/tendermint/tendermint/types"
 )
 
-// PreCheckFunc is an optional filter executed before CheckTx and rejects
-// transaction if false is returned. An example would be to ensure that a
-// transaction doesn't exceeded the block size.
-type PreCheckFunc func(types.Tx) error
-
-// PostCheckFunc is an optional filter executed after CheckTx and rejects
-// transaction if false is returned. An example would be to ensure a
-// transaction doesn't require more gas than available for the block.
-type PostCheckFunc func(types.Tx, *abci.ResponseCheckTx) error
-
-// TxInfo are parameters that get passed when attempting to add a tx to the
-// mempool.
-type TxInfo struct {
+// TxVoteInfo are parameters that get passed when attempting to add a tx vote to the
+// txvotepool.
+type TxVoteInfo struct {
 	// We don't use p2p.ID here because it's too big. The gain is to store max 2
-	// bytes with each tx to identify the sender rather than 20 bytes.
+	// bytes with each tx vote to identify the sender rather than 20 bytes.
 	PeerID uint16
 }
 
-/*
-
-The mempool pushes new txs onto the proxyAppConn.
-It gets a stream of (req, res) tuples from the proxy.
-The mempool stores good txs in a concurrent linked-list.
-
-Multiple concurrent go-routines can traverse this linked-list
-safely by calling .NextWait() on each element.
-
-So we have several go-routines:
-1. Consensus calling Update() and Reap() synchronously
-2. Many mempool reactor's peer routines calling CheckTx()
-3. Many mempool reactor's peer routines traversing the txs linked list
-4. Another goroutine calling GarbageCollectTxs() periodically
-
-To manage these goroutines, there are three methods of locking.
-1. Mutations to the linked-list is protected by an internal mtx (CList is goroutine-safe)
-2. Mutations to the linked-list elements are atomic
-3. CheckTx() calls can be paused upon Update() and Reap(), protected by .proxyMtx
-
-Garbage collection of old elements from mempool.txs is handlde via
-the DetachPrev() call, which makes old elements not reachable by
-peer broadcastTxRoutine() automatically garbage collected.
-
-TODO: Better handle abci client errors. (make it automatically handle connection errors)
-
-*/
-
 var (
-	// ErrTxInCache is returned to the client if we saw tx earlier
-	ErrTxInCache = errors.New("Tx already exists in cache")
+	// ErrTxVoteInCache is returned to the client if we saw tx earlier
+	ErrTxVoteInCache = errors.New("TxVote already exists in cache")
 
-	// ErrTxTooLarge means the tx is too big to be sent in a message to other peers
-	ErrTxTooLarge = fmt.Errorf("Tx too large. Max size is %d", maxTxSize)
+	// ErrTxVoteTooLarge means the txvote is too big to be sent in a message to other peers
+	ErrTxVoteTooLarge = fmt.Errorf("TxVote too large. Max size is %d", maxTxSize)
 )
 
 // ErrMempoolIsFull means Tendermint & an application can't handle that much load

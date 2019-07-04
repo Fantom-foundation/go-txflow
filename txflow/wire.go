@@ -1,4 +1,4 @@
-package consensus
+package txflow
 
 import (
 	amino "github.com/tendermint/go-amino"
@@ -8,7 +8,7 @@ import (
 var cdc = amino.NewCodec()
 
 func init() {
-	RegisterConsensusMessages(cdc)
+	RegisterTxFlowMessages(cdc)
 	RegisterWALMessages(cdc)
 	types.RegisterBlockAmino(cdc)
 }

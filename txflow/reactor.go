@@ -1,4 +1,4 @@
-package consensus
+package txflow
 
 import (
 	"fmt"
@@ -32,8 +32,8 @@ const (
 
 //-----------------------------------------------------------------------------
 
-// ConsensusReactor defines a reactor for the consensus service.
-type ConsensusReactor struct {
+// TxFlowReactor defines a reactor for the consensus service.
+type TxFlowReactor struct {
 	p2p.BaseReactor // BaseService + p2p.Switch
 
 	conS *ConsensusState
@@ -45,38 +45,38 @@ type ConsensusReactor struct {
 	metrics *Metrics
 }
 
-type ReactorOption func(*ConsensusReactor)
+type ReactorOption func(*TxFlowReactor)
 
-// NewConsensusReactor returns a new ConsensusReactor with the given
-// consensusState.
-func NewConsensusReactor(consensusState *ConsensusState, fastSync bool, options ...ReactorOption) *ConsensusReactor {
-	conR := &ConsensusReactor{
+// NewTxFlowReactor returns a new TxFlowReactor with the given
+// txflowState.
+func NewTxFlowReactor(consensusState *ConsensusState, fastSync bool, options ...ReactorOption) *TxFlowReactor {
+	txR := &TxFlowReactor{
 		conS:     consensusState,
 		fastSync: fastSync,
 		metrics:  NopMetrics(),
 	}
-	conR.updateFastSyncingMetric()
-	conR.BaseReactor = *p2p.NewBaseReactor("ConsensusReactor", conR)
+	txR.updateFastSyncingMetric()
+	txR.BaseReactor = *p2p.NewBaseReactor("TxFlowReactor", txR)
 
 	for _, option := range options {
-		option(conR)
+		option(txR)
 	}
 
-	return conR
+	return txR
 }
 
 // OnStart implements BaseService by subscribing to events, which later will be
 // broadcasted to other peers and starting state if we're not in fast sync.
-func (conR *ConsensusReactor) OnStart() error {
-	conR.Logger.Info("ConsensusReactor ", "fastSync", conR.FastSync())
+func (txR *TxFlowReactor) OnStart() error {
+	txR.Logger.Info("TxFlowReactor ", "fastSync", txR.FastSync())
 
 	// start routine that computes peer statistics for evaluating peer quality
-	go conR.peerStatsRoutine()
+	go txR.peerStatsRoutine()
 
-	conR.subscribeToBroadcastEvents()
+	txR.subscribeToBroadcastEvents()
 
-	if !conR.FastSync() {
-		err := conR.conS.Start()
+	if !txR.FastSync() {
+		err := txR.conS.Start()
 		if err != nil {
 			return err
 		}
@@ -87,41 +87,39 @@ func (conR *ConsensusReactor) OnStart() error {
 
 // OnStop implements BaseService by unsubscribing from events and stopping
 // state.
-func (conR *ConsensusReactor) OnStop() {
-	conR.unsubscribeFromBroadcastEvents()
-	conR.conS.Stop()
-	if !conR.FastSync() {
-		conR.conS.Wait()
+func (txR *TxFlowReactor) OnStop() {
+	txR.unsubscribeFromBroadcastEvents()
+	txR.conS.Stop()
+	if !txR.FastSync() {
+		txR.conS.Wait()
 	}
 }
 
 // SwitchToConsensus switches from fast_sync mode to consensus mode.
 // It resets the state, turns off fast_sync, and starts the consensus state-machine
-func (conR *ConsensusReactor) SwitchToConsensus(state sm.State, blocksSynced int) {
-	conR.Logger.Info("SwitchToConsensus")
-	conR.conS.reconstructLastCommit(state)
-	// NOTE: The line below causes broadcastNewRoundStepRoutine() to
-	// broadcast a NewRoundStepMessage.
-	conR.conS.updateToState(state)
+func (txR *TxFlowReactor) SwitchToConsensus(state sm.State, txsSynced int) {
+	txR.Logger.Info("SwitchToConsensus")
+	txR.conS.reconstructLastCommit(state)
+	txR.conS.updateToState(state)
 
-	conR.mtx.Lock()
-	conR.fastSync = false
-	conR.mtx.Unlock()
-	conR.metrics.FastSyncing.Set(0)
+	txR.mtx.Lock()
+	txR.fastSync = false
+	txR.mtx.Unlock()
+	txR.metrics.FastSyncing.Set(0)
 
-	if blocksSynced > 0 {
+	if txsSynced > 0 {
 		// dont bother with the WAL if we fast synced
-		conR.conS.doWALCatchup = false
+		txR.conS.doWALCatchup = false
 	}
-	err := conR.conS.Start()
+	err := txR.conS.Start()
 	if err != nil {
-		conR.Logger.Error("Error starting conS", "err", err)
+		txR.Logger.Error("Error starting conS", "err", err)
 		return
 	}
 }
 
 // GetChannels implements Reactor
-func (conR *ConsensusReactor) GetChannels() []*p2p.ChannelDescriptor {
+func (txR *TxFlowReactor) GetChannels() []*p2p.ChannelDescriptor {
 	// TODO optimize
 	return []*p2p.ChannelDescriptor{
 		{
@@ -131,8 +129,8 @@ func (conR *ConsensusReactor) GetChannels() []*p2p.ChannelDescriptor {
 			RecvMessageCapacity: maxMsgSize,
 		},
 		{
-			ID:                  DataChannel, // maybe split between gossiping current block and catchup stuff
-			Priority:            10,          // once we gossip the whole block there's nothing left to send until next height or round
+			ID:                  DataChannel, // maybe split between gossiping current txs and catchup stuff
+			Priority:            10,          // once we gossip the whole tx there's nothing left to send until next height or round
 			SendQueueCapacity:   100,
 			RecvBufferCapacity:  50 * 4096,
 			RecvMessageCapacity: maxMsgSize,
@@ -155,30 +153,30 @@ func (conR *ConsensusReactor) GetChannels() []*p2p.ChannelDescriptor {
 }
 
 // AddPeer implements Reactor
-func (conR *ConsensusReactor) AddPeer(peer p2p.Peer) {
-	if !conR.IsRunning() {
+func (txR *TxFlowReactor) AddPeer(peer p2p.Peer) {
+	if !txR.IsRunning() {
 		return
 	}
 
 	// Create peerState for peer
-	peerState := NewPeerState(peer).SetLogger(conR.Logger)
+	peerState := NewPeerState(peer).SetLogger(txR.Logger)
 	peer.Set(types.PeerStateKey, peerState)
 
 	// Begin routines for this peer.
-	go conR.gossipDataRoutine(peer, peerState)
-	go conR.gossipVotesRoutine(peer, peerState)
-	go conR.queryMaj23Routine(peer, peerState)
+	go txR.gossipDataRoutine(peer, peerState)
+	go txR.gossipVotesRoutine(peer, peerState)
+	go txR.queryMaj23Routine(peer, peerState)
 
 	// Send our state to peer.
 	// If we're fast_syncing, broadcast a RoundStepMessage later upon SwitchToConsensus().
-	if !conR.FastSync() {
-		conR.sendNewRoundStepMessage(peer)
+	if !txR.FastSync() {
+		txR.sendNewRoundStepMessage(peer)
 	}
 }
 
 // RemovePeer implements Reactor
-func (conR *ConsensusReactor) RemovePeer(peer p2p.Peer, reason interface{}) {
-	if !conR.IsRunning() {
+func (txR *TxFlowReactor) RemovePeer(peer p2p.Peer, reason interface{}) {
+	if !txR.IsRunning() {
 		return
 	}
 	// TODO
@@ -195,26 +193,26 @@ func (conR *ConsensusReactor) RemovePeer(peer p2p.Peer, reason interface{}) {
 // Peer state updates can happen in parallel, but processing of
 // proposals, block parts, and votes are ordered by the receiveRoutine
 // NOTE: blocks on consensus state for proposals, block parts, and votes
-func (conR *ConsensusReactor) Receive(chID byte, src p2p.Peer, msgBytes []byte) {
-	if !conR.IsRunning() {
-		conR.Logger.Debug("Receive", "src", src, "chId", chID, "bytes", msgBytes)
+func (txR *TxFlowReactor) Receive(chID byte, src p2p.Peer, msgBytes []byte) {
+	if !txR.IsRunning() {
+		txR.Logger.Debug("Receive", "src", src, "chId", chID, "bytes", msgBytes)
 		return
 	}
 
 	msg, err := decodeMsg(msgBytes)
 	if err != nil {
-		conR.Logger.Error("Error decoding message", "src", src, "chId", chID, "msg", msg, "err", err, "bytes", msgBytes)
-		conR.Switch.StopPeerForError(src, err)
+		txR.Logger.Error("Error decoding message", "src", src, "chId", chID, "msg", msg, "err", err, "bytes", msgBytes)
+		txR.Switch.StopPeerForError(src, err)
 		return
 	}
 
 	if err = msg.ValidateBasic(); err != nil {
-		conR.Logger.Error("Peer sent us invalid msg", "peer", src, "msg", msg, "err", err)
-		conR.Switch.StopPeerForError(src, err)
+		txR.Logger.Error("Peer sent us invalid msg", "peer", src, "msg", msg, "err", err)
+		txR.Switch.StopPeerForError(src, err)
 		return
 	}
 
-	conR.Logger.Debug("Receive", "src", src, "chId", chID, "msg", msg)
+	txR.Logger.Debug("Receive", "src", src, "chId", chID, "msg", msg)
 
 	// Get peer states
 	ps, ok := src.Get(types.PeerStateKey).(*PeerState)
@@ -225,22 +223,17 @@ func (conR *ConsensusReactor) Receive(chID byte, src p2p.Peer, msgBytes []byte) 
 	switch chID {
 	case StateChannel:
 		switch msg := msg.(type) {
-		case *NewRoundStepMessage:
-			ps.ApplyNewRoundStepMessage(msg)
-		case *NewValidBlockMessage:
-			ps.ApplyNewValidBlockMessage(msg)
-		case *HasVoteMessage:
-			ps.ApplyHasVoteMessage(msg)
-		case *VoteSetMaj23Message:
-			cs := conR.conS
+		case *NewValidTxMessage:
+			ps.ApplyNewValidTxMessage(msg)
+		case *HasTxVoteMessage:
+			ps.ApplyHasTxVoteMessage(msg)
+		case *TxVoteSetMaj23Message:
+			cs := txR.conS
 			cs.mtx.Lock()
 			height, votes := cs.Height, cs.Votes
 			cs.mtx.Unlock()
-			if height != msg.Height {
-				return
-			}
-			// Peer claims to have a maj23 for some BlockID at H,R,S,
-			err := votes.SetPeerMaj23(msg.Round, msg.Type, ps.peer.ID(), msg.BlockID)
+			// Peer claims to have a maj23 for some Vote at H,
+			err := votes.SetPeerMaj23(msg.Type, ps.peer.ID(), msg.TxHash)
 			if err != nil {
 				conR.Switch.StopPeerForError(src, err)
 				return
@@ -1354,25 +1347,20 @@ func (ps *PeerState) StringIndented(indent string) string {
 //-----------------------------------------------------------------------------
 // Messages
 
-// ConsensusMessage is a message that can be sent and received on the ConsensusReactor
-type ConsensusMessage interface {
+// TxFlowMessage is a message that can be sent and received on the TxFlowReactor
+type TxFlowMessage interface {
 	ValidateBasic() error
 }
 
-func RegisterConsensusMessages(cdc *amino.Codec) {
-	cdc.RegisterInterface((*ConsensusMessage)(nil), nil)
-	cdc.RegisterConcrete(&NewRoundStepMessage{}, "tendermint/NewRoundStepMessage", nil)
-	cdc.RegisterConcrete(&NewValidBlockMessage{}, "tendermint/NewValidBlockMessage", nil)
-	cdc.RegisterConcrete(&ProposalMessage{}, "tendermint/Proposal", nil)
-	cdc.RegisterConcrete(&ProposalPOLMessage{}, "tendermint/ProposalPOL", nil)
-	cdc.RegisterConcrete(&BlockPartMessage{}, "tendermint/BlockPart", nil)
-	cdc.RegisterConcrete(&VoteMessage{}, "tendermint/Vote", nil)
-	cdc.RegisterConcrete(&HasVoteMessage{}, "tendermint/HasVote", nil)
-	cdc.RegisterConcrete(&VoteSetMaj23Message{}, "tendermint/VoteSetMaj23", nil)
-	cdc.RegisterConcrete(&VoteSetBitsMessage{}, "tendermint/VoteSetBits", nil)
+func RegisterTxFlowMessages(cdc *amino.Codec) {
+	cdc.RegisterInterface((*TxFlowMessage)(nil), nil)
+	cdc.RegisterConcrete(&TxVoteMessage{}, "tendermint/TxVote", nil)
+	cdc.RegisterConcrete(&HasTxVoteMessage{}, "tendermint/HasTxVote", nil)
+	cdc.RegisterConcrete(&TxVoteSetMaj23Message{}, "tendermint/TxVoteSetMaj23", nil)
+	cdc.RegisterConcrete(&TxVoteSetBitsMessage{}, "tendermint/TxVoteSetBits", nil)
 }
 
-func decodeMsg(bz []byte) (msg ConsensusMessage, err error) {
+func decodeMsg(bz []byte) (msg TxFlowMessage, err error) {
 	if len(bz) > maxMsgSize {
 		return msg, fmt.Errorf("Msg exceeds max size (%d > %d)", len(bz), maxMsgSize)
 	}
@@ -1380,269 +1368,93 @@ func decodeMsg(bz []byte) (msg ConsensusMessage, err error) {
 	return
 }
 
-//-------------------------------------
-
-// NewRoundStepMessage is sent for every step taken in the ConsensusState.
-// For every height/round/step transition
-type NewRoundStepMessage struct {
-	Height                int64
-	Round                 int
-	Step                  cstypes.RoundStepType
-	SecondsSinceStartTime int
-	LastCommitRound       int
+// TxVoteMessage is sent when voting for a tx (or lack thereof).
+type TxVoteMessage struct {
+	TxVote *types.TxVote
 }
 
 // ValidateBasic performs basic validation.
-func (m *NewRoundStepMessage) ValidateBasic() error {
-	if m.Height < 0 {
-		return errors.New("Negative Height")
-	}
-	if m.Round < 0 {
-		return errors.New("Negative Round")
-	}
-	if !m.Step.IsValid() {
-		return errors.New("Invalid Step")
-	}
+func (m *TxVoteMessage) ValidateBasic() error {
+	return m.TxVote.ValidateBasic()
+}
 
-	// NOTE: SecondsSinceStartTime may be negative
+// String returns a string representation.
+func (m *TxVoteMessage) String() string {
+	return fmt.Sprintf("[TxVote %v]", m.TxVote)
+}
 
-	if (m.Height == 1 && m.LastCommitRound != -1) ||
-		(m.Height > 1 && m.LastCommitRound < -1) { // TODO: #2737 LastCommitRound should always be >= 0 for heights > 1
-		return errors.New("Invalid LastCommitRound (for 1st block: -1, for others: >= 0)")
+//-------------------------------------
+
+// HasTxVoteMessage is sent to indicate that a particular vote has been received.
+type HasTxVoteMessage struct {
+	TxHash  cmn.HexBytes
+	Address cmn.HexBytes
+}
+
+// ValidateBasic performs basic validation.
+func (m *HasTxVoteMessage) ValidateBasic() error {
+	if err := types.ValidateHash(m.TxHash); err != nil {
+		return fmt.Errorf("Wrong TxHash: %v", err)
+	}
+	if err := types.ValidateHash(m.Address); err != nil {
+		return fmt.Errorf("Wrong Address: %v", err)
 	}
 	return nil
 }
 
 // String returns a string representation.
-func (m *NewRoundStepMessage) String() string {
-	return fmt.Sprintf("[NewRoundStep H:%v R:%v S:%v LCR:%v]",
-		m.Height, m.Round, m.Step, m.LastCommitRound)
+func (m *HasTxVoteMessage) String() string {
+	return fmt.Sprintf("[HasTxVote %X %X]", m.TxHash, m.Address)
 }
 
 //-------------------------------------
 
-// NewValidBlockMessage is sent when a validator observes a valid block B in some round r,
-//i.e., there is a Proposal for block B and 2/3+ prevotes for the block B in the round r.
-// In case the block is also committed, then IsCommit flag is set to true.
-type NewValidBlockMessage struct {
-	Height           int64
-	Round            int
-	BlockPartsHeader types.PartSetHeader
-	BlockParts       *cmn.BitArray
-	IsCommit         bool
-}
-
-// ValidateBasic performs basic validation.
-func (m *NewValidBlockMessage) ValidateBasic() error {
-	if m.Height < 0 {
-		return errors.New("Negative Height")
-	}
-	if m.Round < 0 {
-		return errors.New("Negative Round")
-	}
-	if err := m.BlockPartsHeader.ValidateBasic(); err != nil {
-		return fmt.Errorf("Wrong BlockPartsHeader: %v", err)
-	}
-	if m.BlockParts.Size() != m.BlockPartsHeader.Total {
-		return fmt.Errorf("BlockParts bit array size %d not equal to BlockPartsHeader.Total %d",
-			m.BlockParts.Size(),
-			m.BlockPartsHeader.Total)
-	}
-	return nil
-}
-
-// String returns a string representation.
-func (m *NewValidBlockMessage) String() string {
-	return fmt.Sprintf("[ValidBlockMessage H:%v R:%v BP:%v BA:%v IsCommit:%v]",
-		m.Height, m.Round, m.BlockPartsHeader, m.BlockParts, m.IsCommit)
-}
-
-//-------------------------------------
-
-// ProposalMessage is sent when a new block is proposed.
-type ProposalMessage struct {
-	Proposal *types.Proposal
-}
-
-// ValidateBasic performs basic validation.
-func (m *ProposalMessage) ValidateBasic() error {
-	return m.Proposal.ValidateBasic()
-}
-
-// String returns a string representation.
-func (m *ProposalMessage) String() string {
-	return fmt.Sprintf("[Proposal %v]", m.Proposal)
-}
-
-//-------------------------------------
-
-// ProposalPOLMessage is sent when a previous proposal is re-proposed.
-type ProposalPOLMessage struct {
-	Height           int64
-	ProposalPOLRound int
-	ProposalPOL      *cmn.BitArray
-}
-
-// ValidateBasic performs basic validation.
-func (m *ProposalPOLMessage) ValidateBasic() error {
-	if m.Height < 0 {
-		return errors.New("Negative Height")
-	}
-	if m.ProposalPOLRound < 0 {
-		return errors.New("Negative ProposalPOLRound")
-	}
-	if m.ProposalPOL.Size() == 0 {
-		return errors.New("Empty ProposalPOL bit array")
-	}
-	return nil
-}
-
-// String returns a string representation.
-func (m *ProposalPOLMessage) String() string {
-	return fmt.Sprintf("[ProposalPOL H:%v POLR:%v POL:%v]", m.Height, m.ProposalPOLRound, m.ProposalPOL)
-}
-
-//-------------------------------------
-
-// BlockPartMessage is sent when gossipping a piece of the proposed block.
-type BlockPartMessage struct {
+// TxVoteSetMaj23Message is sent to indicate that a given TxHash has seen +2/3 votes.
+type TxVoteSetMaj23Message struct {
 	Height int64
-	Round  int
-	Part   *types.Part
+	TxHash cmn.HexBytes
 }
 
 // ValidateBasic performs basic validation.
-func (m *BlockPartMessage) ValidateBasic() error {
+func (m *TxVoteSetMaj23Message) ValidateBasic() error {
 	if m.Height < 0 {
 		return errors.New("Negative Height")
 	}
-	if m.Round < 0 {
-		return errors.New("Negative Round")
-	}
-	if err := m.Part.ValidateBasic(); err != nil {
-		return fmt.Errorf("Wrong Part: %v", err)
+	if err := types.ValidateHash(m.TxHash); err != nil {
+		return fmt.Errorf("Wrong TxHash: %v", err)
 	}
 	return nil
 }
 
 // String returns a string representation.
-func (m *BlockPartMessage) String() string {
-	return fmt.Sprintf("[BlockPart H:%v R:%v P:%v]", m.Height, m.Round, m.Part)
+func (m *TxVoteSetMaj23Message) String() string {
+	return fmt.Sprintf("[TVSM23 %v %X]", m.Height, m.TxHash)
 }
 
 //-------------------------------------
 
-// VoteMessage is sent when voting for a proposal (or lack thereof).
-type VoteMessage struct {
-	Vote *types.Vote
-}
-
-// ValidateBasic performs basic validation.
-func (m *VoteMessage) ValidateBasic() error {
-	return m.Vote.ValidateBasic()
-}
-
-// String returns a string representation.
-func (m *VoteMessage) String() string {
-	return fmt.Sprintf("[Vote %v]", m.Vote)
-}
-
-//-------------------------------------
-
-// HasVoteMessage is sent to indicate that a particular vote has been received.
-type HasVoteMessage struct {
+// TxVoteSetBitsMessage is sent to communicate the bit-array of votes seen for the TxHash.
+type TxVoteSetBitsMessage struct {
 	Height int64
-	Round  int
-	Type   types.SignedMsgType
-	Index  int
+	TxHash cmn.HexBytes
+	Votes  *cmn.BitArray
 }
 
 // ValidateBasic performs basic validation.
-func (m *HasVoteMessage) ValidateBasic() error {
+func (m *TxVoteSetBitsMessage) ValidateBasic() error {
 	if m.Height < 0 {
 		return errors.New("Negative Height")
 	}
-	if m.Round < 0 {
-		return errors.New("Negative Round")
-	}
-	if !types.IsVoteTypeValid(m.Type) {
-		return errors.New("Invalid Type")
-	}
-	if m.Index < 0 {
-		return errors.New("Negative Index")
-	}
-	return nil
-}
-
-// String returns a string representation.
-func (m *HasVoteMessage) String() string {
-	return fmt.Sprintf("[HasVote VI:%v V:{%v/%02d/%v}]", m.Index, m.Height, m.Round, m.Type)
-}
-
-//-------------------------------------
-
-// VoteSetMaj23Message is sent to indicate that a given BlockID has seen +2/3 votes.
-type VoteSetMaj23Message struct {
-	Height  int64
-	Round   int
-	Type    types.SignedMsgType
-	BlockID types.BlockID
-}
-
-// ValidateBasic performs basic validation.
-func (m *VoteSetMaj23Message) ValidateBasic() error {
-	if m.Height < 0 {
-		return errors.New("Negative Height")
-	}
-	if m.Round < 0 {
-		return errors.New("Negative Round")
-	}
-	if !types.IsVoteTypeValid(m.Type) {
-		return errors.New("Invalid Type")
-	}
-	if err := m.BlockID.ValidateBasic(); err != nil {
-		return fmt.Errorf("Wrong BlockID: %v", err)
-	}
-	return nil
-}
-
-// String returns a string representation.
-func (m *VoteSetMaj23Message) String() string {
-	return fmt.Sprintf("[VSM23 %v/%02d/%v %v]", m.Height, m.Round, m.Type, m.BlockID)
-}
-
-//-------------------------------------
-
-// VoteSetBitsMessage is sent to communicate the bit-array of votes seen for the BlockID.
-type VoteSetBitsMessage struct {
-	Height  int64
-	Round   int
-	Type    types.SignedMsgType
-	BlockID types.BlockID
-	Votes   *cmn.BitArray
-}
-
-// ValidateBasic performs basic validation.
-func (m *VoteSetBitsMessage) ValidateBasic() error {
-	if m.Height < 0 {
-		return errors.New("Negative Height")
-	}
-	if m.Round < 0 {
-		return errors.New("Negative Round")
-	}
-	if !types.IsVoteTypeValid(m.Type) {
-		return errors.New("Invalid Type")
-	}
-	if err := m.BlockID.ValidateBasic(); err != nil {
-		return fmt.Errorf("Wrong BlockID: %v", err)
+	if err := types.ValidateHash(m.TxHash); err != nil {
+		return fmt.Errorf("Wrong TxHash: %v", err)
 	}
 	// NOTE: Votes.Size() can be zero if the node does not have any
 	return nil
 }
 
 // String returns a string representation.
-func (m *VoteSetBitsMessage) String() string {
-	return fmt.Sprintf("[VSB %v/%02d/%v %v %v]", m.Height, m.Round, m.Type, m.BlockID, m.Votes)
+func (m *TxVoteSetBitsMessage) String() string {
+	return fmt.Sprintf("[TVSB %v %X %v]", m.Height, m.TxHash, m.Votes)
 }
 
 //-------------------------------------
