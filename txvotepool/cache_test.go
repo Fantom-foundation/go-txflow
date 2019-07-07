@@ -1,27 +1,24 @@
 package txvotepool
 
 import (
-	"crypto/rand"
 	"crypto/sha256"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/Fantom-foundation/go-txflow/types"
 	"github.com/tendermint/tendermint/abci/example/kvstore"
 	"github.com/tendermint/tendermint/proxy"
-	"github.com/tendermint/tendermint/types"
 )
 
 func TestCacheRemove(t *testing.T) {
 	cache := newMapTxCache(100)
 	numTxs := 10
-	txs := make([][]byte, numTxs)
+	txs := make([]types.TxVote, numTxs)
 	for i := 0; i < numTxs; i++ {
-		// probability of collision is 2**-256
-		txBytes := make([]byte, 32)
-		rand.Read(txBytes) // nolint: gosec
-		txs[i] = txBytes
-		cache.Push(txBytes)
+		txs[i] = types.TxVote{int64(i), nil, time.Now(), nil, nil}
+		cache.Push(txs[i])
 		// make sure its added to both the linked list and the map
 		require.Equal(t, i+1, len(cache.map_))
 		require.Equal(t, i+1, cache.list.Len())
@@ -56,21 +53,21 @@ func TestCacheAfterUpdate(t *testing.T) {
 	}
 	for tcIndex, tc := range tests {
 		for i := 0; i < tc.numTxsToCreate; i++ {
-			tx := types.Tx{byte(i)}
-			err := mempool.CheckTx(tx, nil)
+			tx := types.TxVote{int64(i), nil, time.Now(), nil, nil}
+			err := mempool.CheckTx(tx)
 			require.NoError(t, err)
 		}
 
-		updateTxs := []types.Tx{}
+		updateTxs := []types.TxVote{}
 		for _, v := range tc.updateIndices {
-			tx := types.Tx{byte(v)}
+			tx := types.TxVote{int64(v), nil, time.Now(), nil, nil}
 			updateTxs = append(updateTxs, tx)
 		}
-		mempool.Update(int64(tcIndex), updateTxs, nil, nil)
+		mempool.Update(updateTxs)
 
 		for _, v := range tc.reAddIndices {
-			tx := types.Tx{byte(v)}
-			_ = mempool.CheckTx(tx, nil)
+			tx := types.TxVote{int64(v), nil, time.Now(), nil, nil}
+			_ = mempool.CheckTx(tx)
 		}
 
 		cache := mempool.cache.(*mapTxCache)

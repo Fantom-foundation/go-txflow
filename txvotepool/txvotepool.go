@@ -86,6 +86,9 @@ type TxVotePool struct {
 	notifiedTxsAvailable bool
 	txsAvailable         chan struct{} // fires once for each height, when the mempool is not empty
 
+	// Atomic integers
+	height int64 // the last event Update()'d to
+
 	// Map for quick access to txs to record sender in CheckTx.
 	// txsMap: txKey -> CElement
 	txsMap   sync.Map
@@ -109,11 +112,13 @@ type TxVotePoolOption func(*TxVotePool)
 // NewMempool returns a new Mempool with the given configuration and connection to an application.
 func NewTxVotePool(
 	config *cfg.MempoolConfig,
+	height int64,
 	options ...TxVotePoolOption,
 ) *TxVotePool {
 	txVotePool := &TxVotePool{
 		config:  config,
 		txs:     clist.New(),
+		height:  height,
 		logger:  log.NewNopLogger(),
 		metrics: NopMetrics(),
 	}
@@ -290,8 +295,6 @@ func (txVotePool *TxVotePool) CheckTxWithInfo(tx types.TxVote, txInfo TxVoteInfo
 			txVotePool.logger.Error("Error writing to WAL", "err", err)
 		}
 	}
-	// END WAL
-
 	// END WAL
 
 	memTxVote := &mempoolTxVote{

@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	TxpoolChannel = byte(0x31)
+	TxpoolChannel = byte(0x32)
 
 	maxMsgSize = 1048576        // 1MB TODO make it configurable
 	maxTxSize  = maxMsgSize - 8 // account for amino overhead of TxMessage
@@ -32,14 +32,14 @@ const (
 	maxActiveIDs = math.MaxUint16
 )
 
-// TxpooReactor handles txpool tx broadcasting amongst peers.
+// TxVotePoolReactor handles txpool tx broadcasting amongst peers.
 // It maintains a map from peer ID to counter, to prevent gossiping txs to the
 // peers you received it from.
-type TxpoolReactor struct {
+type TxVotePoolReactor struct {
 	p2p.BaseReactor
-	config *cfg.MempoolConfig
-	Txpool *TxVotePool
-	ids    *txpoolIDs
+	config     *cfg.MempoolConfig
+	TxVotePool *TxVotePool
+	ids        *txpoolIDs
 }
 
 type txpoolIDs struct {

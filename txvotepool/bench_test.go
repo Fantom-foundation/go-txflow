@@ -1,9 +1,10 @@
 package txvotepool
 
 import (
-	"encoding/binary"
 	"testing"
+	"time"
 
+	"github.com/Fantom-foundation/go-txflow/types"
 	"github.com/tendermint/tendermint/abci/example/kvstore"
 	"github.com/tendermint/tendermint/proxy"
 )
@@ -16,14 +17,10 @@ func BenchmarkReap(b *testing.B) {
 
 	size := 10000
 	for i := 0; i < size; i++ {
-		tx := make([]byte, 8)
-		binary.BigEndian.PutUint64(tx, uint64(i))
-		mempool.CheckTx(tx, nil)
+		tx := types.TxVote{int64(i), nil, time.Now(), nil, nil}
+		mempool.CheckTx(tx)
 	}
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		mempool.ReapMaxBytesMaxGas(100000000, 10000000)
-	}
 }
 
 func BenchmarkCheckTx(b *testing.B) {
@@ -33,18 +30,16 @@ func BenchmarkCheckTx(b *testing.B) {
 	defer cleanup()
 
 	for i := 0; i < b.N; i++ {
-		tx := make([]byte, 8)
-		binary.BigEndian.PutUint64(tx, uint64(i))
-		mempool.CheckTx(tx, nil)
+		tx := types.TxVote{int64(i), nil, time.Now(), nil, nil}
+		mempool.CheckTx(tx)
 	}
 }
 
 func BenchmarkCacheInsertTime(b *testing.B) {
 	cache := newMapTxCache(b.N)
-	txs := make([][]byte, b.N)
+	txs := make([]types.TxVote, b.N)
 	for i := 0; i < b.N; i++ {
-		txs[i] = make([]byte, 8)
-		binary.BigEndian.PutUint64(txs[i], uint64(i))
+		txs[i] = types.TxVote{int64(i), nil, time.Now(), nil, nil}
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -56,10 +51,9 @@ func BenchmarkCacheInsertTime(b *testing.B) {
 // txs in parallel, which may cause some overhead due to mutex locking.
 func BenchmarkCacheRemoveTime(b *testing.B) {
 	cache := newMapTxCache(b.N)
-	txs := make([][]byte, b.N)
+	txs := make([]types.TxVote, b.N)
 	for i := 0; i < b.N; i++ {
-		txs[i] = make([]byte, 8)
-		binary.BigEndian.PutUint64(txs[i], uint64(i))
+		txs[i] = types.TxVote{int64(i), nil, time.Now(), nil, nil}
 		cache.Push(txs[i])
 	}
 	b.ResetTimer()
