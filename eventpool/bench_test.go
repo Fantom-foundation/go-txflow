@@ -3,7 +3,7 @@ package eventpool
 import (
 	"testing"
 
-	"github.com/andrecronje/babble-abci/types"
+	"github.com/Fantom-foundation/txflow/types"
 	"github.com/tendermint/tendermint/abci/example/kvstore"
 	"github.com/tendermint/tendermint/proxy"
 )

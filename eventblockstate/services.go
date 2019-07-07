@@ -1,8 +1,8 @@
 package state
 
 import (
-	"github.com/andrecronje/babble-abci/eventpool"
-	"github.com/andrecronje/babble-abci/types"
+	"github.com/Fantom-foundation/txflow/eventpool"
+	"github.com/Fantom-foundation/txflow/types"
 	abci "github.com/tendermint/tendermint/abci/types"
 	ttypes "github.com/tendermint/tendermint/types"
 )

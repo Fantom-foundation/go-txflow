@@ -5,7 +5,7 @@ import (
 	"math"
 	"sort"
 
-	"github.com/andrecronje/babble-abci/types"
+	"github.com/Fantom-foundation/txflow/types"
 	"github.com/andrecronje/babble/src/common"
 	"github.com/tendermint/tendermint/libs/log"
 	ttypes "github.com/tendermint/tendermint/types"

@@ -9,7 +9,7 @@ import (
 
 	amino "github.com/tendermint/go-amino"
 
-	"github.com/andrecronje/babble-abci/types"
+	"github.com/Fantom-foundation/txflow/types"
 	cfg "github.com/tendermint/tendermint/config"
 	"github.com/tendermint/tendermint/libs/clist"
 	"github.com/tendermint/tendermint/libs/log"

@@ -1,7 +1,7 @@
 package hashgraph
 
 import (
-	"github.com/andrecronje/babble-abci/types"
+	"github.com/Fantom-foundation/txflow/types"
 	ttypes "github.com/tendermint/tendermint/types"
 )
 

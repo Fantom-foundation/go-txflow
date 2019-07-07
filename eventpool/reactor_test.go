@@ -12,8 +12,8 @@ import (
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/andrecronje/babble-abci/config"
-	"github.com/andrecronje/babble-abci/types"
+	"github.com/Fantom-foundation/txflow/config"
+	"github.com/Fantom-foundation/txflow/types"
 	"github.com/tendermint/tendermint/abci/example/kvstore"
 	cfg "github.com/tendermint/tendermint/config"
 	"github.com/tendermint/tendermint/libs/log"

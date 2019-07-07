@@ -11,9 +11,9 @@ import (
 	"sync"
 	"time"
 
-	conf "github.com/andrecronje/babble-abci/config"
-	"github.com/andrecronje/babble-abci/eventpool"
-	"github.com/andrecronje/babble-abci/hashgraph"
+	conf "github.com/Fantom-foundation/txflow/config"
+	"github.com/Fantom-foundation/txflow/eventpool"
+	"github.com/Fantom-foundation/txflow/hashgraph"
 	"github.com/andrecronje/babble/src/service"
 
 	_ "net/http/pprof"
