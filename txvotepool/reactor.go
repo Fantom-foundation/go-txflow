@@ -9,11 +9,12 @@ import (
 
 	amino "github.com/tendermint/go-amino"
 
+	"github.com/andrecronje/babble-abci/types"
 	cfg "github.com/tendermint/tendermint/config"
 	"github.com/tendermint/tendermint/libs/clist"
 	"github.com/tendermint/tendermint/libs/log"
 	"github.com/tendermint/tendermint/p2p"
-	"github.com/tendermint/tendermint/types"
+	ttypes "github.com/tendermint/tendermint/types"
 )
 
 const (
@@ -37,7 +38,7 @@ const (
 type TxpoolReactor struct {
 	p2p.BaseReactor
 	config *cfg.MempoolConfig
-	Txpool *Txpool
+	Txpool *TxVotePool
 	ids    *txpoolIDs
 }
 
@@ -105,7 +106,7 @@ func newTxpoolIDs() *txpoolIDs {
 }
 
 // NewTxpoolReactor returns a new TxpoolReactor with the given config and txpool.
-func NewTxpoolReactor(config *cfg.MempoolConfig, txpool *Txpool) *TxpoolReactor {
+func NewTxpoolReactor(config *cfg.MempoolConfig, txpool *TxVotePool) *TxpoolReactor {
 	txR := &TxpoolReactor{
 		config: config,
 		Txpool: txpool,
@@ -167,9 +168,9 @@ func (txR *TxpoolReactor) Receive(chID byte, src p2p.Peer, msgBytes []byte) {
 	switch msg := msg.(type) {
 	case *TxMessage:
 		peerID := txR.ids.GetForPeer(src)
-		err := txR.Txpool.CheckTxWithInfo(msg.Tx, nil, TxInfo{PeerID: peerID})
+		err := txR.Txpool.CheckTxWithInfo(msg.Tx, TxVoteInfo{PeerID: peerID})
 		if err != nil {
-			txR.Logger.Info("Could not check tx", "tx", TxID(msg.Tx), "err", err)
+			txR.Logger.Info("Could not check tx", "tx", TxVoteID(msg.Tx), "err", err)
 		}
 		// broadcasting happens from go routines per peer
 	default:
@@ -211,10 +212,10 @@ func (txR *TxpoolReactor) broadcastTxRoutine(peer p2p.Peer) {
 			}
 		}
 
-		txTx := next.Value.(*txpoolTx)
+		txTx := next.Value.(*mempoolTxVote)
 
 		// make sure the peer is up to date
-		peerState, ok := peer.Get(types.PeerStateKey).(PeerState)
+		peerState, ok := peer.Get(ttypes.PeerStateKey).(PeerState)
 		if !ok {
 			// Peer does not have a state yet. We set it in the consensus reactor, but
 			// when we add peer in Switch, the order we call reactors#AddPeer is
@@ -258,7 +259,7 @@ func (txR *TxpoolReactor) broadcastTxRoutine(peer p2p.Peer) {
 // TxpoolMessage is a message sent or received by the TxpoolReactor.
 type TxpoolMessage interface{}
 
-func RegisterTxpoolMessages(cdc *amino.Codec) {
+func RegisterTxVotePoolMessages(cdc *amino.Codec) {
 	cdc.RegisterInterface((*TxpoolMessage)(nil), nil)
 	cdc.RegisterConcrete(&TxMessage{}, "tendermint/txpool/TxMessage", nil)
 }
@@ -275,7 +276,7 @@ func decodeMsg(bz []byte) (msg TxpoolMessage, err error) {
 
 // TxMessage is a TxpoolMessage containing a transaction.
 type TxMessage struct {
-	Tx types.Tx
+	Tx types.TxVote
 }
 
 // String returns a string representation of the TxMessage.

@@ -102,6 +102,15 @@ func (vote *TxVote) ValidateBasic() error {
 	return nil
 }
 
+// Size returns size of the block in bytes.
+func (vote *TxVote) Size() int {
+	bz, err := cdc.MarshalBinaryBare(vote)
+	if err != nil {
+		return 0
+	}
+	return len(bz)
+}
+
 //-------------------------------------
 
 // CommitSig is a vote included in a Commit.

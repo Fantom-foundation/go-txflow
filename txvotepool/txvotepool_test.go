@@ -32,11 +32,11 @@ import (
 // test.
 type cleanupFunc func()
 
-func newMempoolWithApp(cc proxy.ClientCreator) (*Mempool, cleanupFunc) {
+func newMempoolWithApp(cc proxy.ClientCreator) (*TxVotePool, cleanupFunc) {
 	return newMempoolWithAppAndConfig(cc, cfg.ResetTestRoot("mempool_test"))
 }
 
-func newMempoolWithAppAndConfig(cc proxy.ClientCreator, config *cfg.Config) (*Mempool, cleanupFunc) {
+func newMempoolWithAppAndConfig(cc proxy.ClientCreator, config *cfg.Config) (*TxVotePool, cleanupFunc) {
 	appConnMem, _ := cc.NewABCIClient()
 	appConnMem.SetLogger(log.TestingLogger().With("module", "abci-client", "connection", "mempool"))
 	err := appConnMem.Start()
@@ -66,7 +66,7 @@ func ensureFire(t *testing.T, ch <-chan struct{}, timeoutMS int) {
 	}
 }
 
-func checkTxs(t *testing.T, mempool *Mempool, count int, peerID uint16) types.Txs {
+func checkTxs(t *testing.T, mempool *TxVotePool, count int, peerID uint16) types.Txs {
 	txs := make(types.Txs, count)
 	txInfo := TxInfo{PeerID: peerID}
 	for i := 0; i < count; i++ {

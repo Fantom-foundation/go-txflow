@@ -7,5 +7,5 @@ import (
 var cdc = amino.NewCodec()
 
 func init() {
-	RegisterTxVotepoolMessages(cdc)
+	RegisterTxVotePoolMessages(cdc)
 }
