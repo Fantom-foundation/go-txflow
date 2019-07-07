@@ -105,25 +105,25 @@ func newTxpoolIDs() *txpoolIDs {
 	}
 }
 
-// NewTxpoolReactor returns a new TxpoolReactor with the given config and txpool.
-func NewTxpoolReactor(config *cfg.MempoolConfig, txpool *TxVotePool) *TxpoolReactor {
-	txR := &TxpoolReactor{
-		config: config,
-		Txpool: txpool,
-		ids:    newTxpoolIDs(),
+// NewTxVotePoolReactor returns a new TxpoolReactor with the given config and txpool.
+func NewTxVotePoolReactor(config *cfg.MempoolConfig, txpool *TxVotePool) *TxVotePoolReactor {
+	txR := &TxVotePoolReactor{
+		config:     config,
+		TxVotePool: txpool,
+		ids:        newTxpoolIDs(),
 	}
 	txR.BaseReactor = *p2p.NewBaseReactor("TxpoolReactor", txR)
 	return txR
 }
 
 // SetLogger sets the Logger on the reactor and the underlying Mempool.
-func (txR *TxpoolReactor) SetLogger(l log.Logger) {
+func (txR *TxVotePoolReactor) SetLogger(l log.Logger) {
 	txR.Logger = l
-	txR.Txpool.SetLogger(l)
+	txR.TxVotePool.SetLogger(l)
 }
 
 // OnStart implements p2p.BaseReactor.
-func (txR *TxpoolReactor) OnStart() error {
+func (txR *TxVotePoolReactor) OnStart() error {
 	if !txR.config.Broadcast {
 		txR.Logger.Info("Tx broadcasting is disabled")
 	}
@@ -132,7 +132,7 @@ func (txR *TxpoolReactor) OnStart() error {
 
 // GetChannels implements Reactor.
 // It returns the list of channels for this reactor.
-func (txR *TxpoolReactor) GetChannels() []*p2p.ChannelDescriptor {
+func (txR *TxVotePoolReactor) GetChannels() []*p2p.ChannelDescriptor {
 	return []*p2p.ChannelDescriptor{
 		{
 			ID:       TxpoolChannel,
@@ -143,20 +143,20 @@ func (txR *TxpoolReactor) GetChannels() []*p2p.ChannelDescriptor {
 
 // AddPeer implements Reactor.
 // It starts a broadcast routine ensuring all txs are forwarded to the given peer.
-func (txR *TxpoolReactor) AddPeer(peer p2p.Peer) {
+func (txR *TxVotePoolReactor) AddPeer(peer p2p.Peer) {
 	txR.ids.ReserveForPeer(peer)
 	go txR.broadcastTxRoutine(peer)
 }
 
 // RemovePeer implements Reactor.
-func (txR *TxpoolReactor) RemovePeer(peer p2p.Peer, reason interface{}) {
+func (txR *TxVotePoolReactor) RemovePeer(peer p2p.Peer, reason interface{}) {
 	txR.ids.Reclaim(peer)
 	// broadcast routine checks if peer is gone and returns
 }
 
 // Receive implements Reactor.
 // It adds any received transactions to the txpool.
-func (txR *TxpoolReactor) Receive(chID byte, src p2p.Peer, msgBytes []byte) {
+func (txR *TxVotePoolReactor) Receive(chID byte, src p2p.Peer, msgBytes []byte) {
 	msg, err := decodeMsg(msgBytes)
 	if err != nil {
 		txR.Logger.Error("Error decoding message", "src", src, "chId", chID, "msg", msg, "err", err, "bytes", msgBytes)
@@ -168,7 +168,7 @@ func (txR *TxpoolReactor) Receive(chID byte, src p2p.Peer, msgBytes []byte) {
 	switch msg := msg.(type) {
 	case *TxMessage:
 		peerID := txR.ids.GetForPeer(src)
-		err := txR.Txpool.CheckTxWithInfo(msg.Tx, TxVoteInfo{PeerID: peerID})
+		err := txR.TxVotePool.CheckTxWithInfo(msg.Tx, TxVoteInfo{PeerID: peerID})
 		if err != nil {
 			txR.Logger.Info("Could not check tx", "tx", TxVoteID(msg.Tx), "err", err)
 		}
@@ -184,7 +184,7 @@ type PeerState interface {
 }
 
 // Send new txpool txs to peer.
-func (txR *TxpoolReactor) broadcastTxRoutine(peer p2p.Peer) {
+func (txR *TxVotePoolReactor) broadcastTxRoutine(peer p2p.Peer) {
 	if !txR.config.Broadcast {
 		return
 	}
@@ -201,8 +201,8 @@ func (txR *TxpoolReactor) broadcastTxRoutine(peer p2p.Peer) {
 		// start from the beginning.
 		if next == nil {
 			select {
-			case <-txR.Txpool.TxsWaitChan(): // Wait until a tx is available
-				if next = txR.Txpool.TxsFront(); next == nil {
+			case <-txR.TxVotePool.TxsWaitChan(): // Wait until a tx is available
+				if next = txR.TxVotePool.TxsFront(); next == nil {
 					continue
 				}
 			case <-peer.Quit():
@@ -282,4 +282,67 @@ type TxMessage struct {
 // String returns a string representation of the TxMessage.
 func (m *TxMessage) String() string {
 	return fmt.Sprintf("[TxMessage %v]", m.Tx)
+}
+
+type mempoolIDs struct {
+	mtx       sync.RWMutex
+	peerMap   map[p2p.ID]uint16
+	nextID    uint16              // assumes that a node will never have over 65536 active peers
+	activeIDs map[uint16]struct{} // used to check if a given peerID key is used, the value doesn't matter
+}
+
+// Reserve searches for the next unused ID and assignes it to the
+// peer.
+func (ids *mempoolIDs) ReserveForPeer(peer p2p.Peer) {
+	ids.mtx.Lock()
+	defer ids.mtx.Unlock()
+
+	curID := ids.nextPeerID()
+	ids.peerMap[peer.ID()] = curID
+	ids.activeIDs[curID] = struct{}{}
+}
+
+// nextPeerID returns the next unused peer ID to use.
+// This assumes that ids's mutex is already locked.
+func (ids *mempoolIDs) nextPeerID() uint16 {
+	if len(ids.activeIDs) == maxActiveIDs {
+		panic(fmt.Sprintf("node has maximum %d active IDs and wanted to get one more", maxActiveIDs))
+	}
+
+	_, idExists := ids.activeIDs[ids.nextID]
+	for idExists {
+		ids.nextID++
+		_, idExists = ids.activeIDs[ids.nextID]
+	}
+	curID := ids.nextID
+	ids.nextID++
+	return curID
+}
+
+// Reclaim returns the ID reserved for the peer back to unused pool.
+func (ids *mempoolIDs) Reclaim(peer p2p.Peer) {
+	ids.mtx.Lock()
+	defer ids.mtx.Unlock()
+
+	removedID, ok := ids.peerMap[peer.ID()]
+	if ok {
+		delete(ids.activeIDs, removedID)
+		delete(ids.peerMap, peer.ID())
+	}
+}
+
+// GetForPeer returns an ID reserved for the peer.
+func (ids *mempoolIDs) GetForPeer(peer p2p.Peer) uint16 {
+	ids.mtx.RLock()
+	defer ids.mtx.RUnlock()
+
+	return ids.peerMap[peer.ID()]
+}
+
+func newMempoolIDs() *mempoolIDs {
+	return &mempoolIDs{
+		peerMap:   make(map[p2p.ID]uint16),
+		activeIDs: map[uint16]struct{}{0: {}},
+		nextID:    1, // reserve unknownPeerID(0) for mempoolReactor.BroadcastTx
+	}
 }
