@@ -8,6 +8,7 @@ import (
 
 	"github.com/tendermint/tendermint/crypto"
 	cmn "github.com/tendermint/tendermint/libs/common"
+	ttypes "github.com/tendermint/tendermint/types"
 )
 
 const (
@@ -42,14 +43,14 @@ func (vote *TxVote) CommitSig() *CommitSig {
 }
 
 func (vote *TxVote) SignBytes(chainID string) []byte {
-	bz, err := cdc.MarshalBinaryLengthPrefixed(CanonicalizeVote(chainID, vote))
+	bz, err := cdc.MarshalBinaryLengthPrefixed(CanonicalizeTxVote(chainID, vote))
 	if err != nil {
 		panic(err)
 	}
 	return bz
 }
 
-func (vote *TxVote) Copy() *Vote {
+func (vote *TxVote) Copy() *TxVote {
 	voteCopy := *vote
 	return &voteCopy
 }
@@ -64,13 +65,13 @@ func (vote *TxVote) String() string {
 		vote.Height,
 		cmn.Fingerprint(vote.TxHash),
 		cmn.Fingerprint(vote.Signature),
-		CanonicalTime(vote.Timestamp),
+		ttypes.CanonicalTime(vote.Timestamp),
 	)
 }
 
 func (vote *TxVote) Verify(chainID string, pubKey crypto.PubKey) error {
 	if !bytes.Equal(pubKey.Address(), vote.ValidatorAddress) {
-		return ErrVoteInvalidValidatorAddress
+		return ttypes.ErrVoteInvalidValidatorAddress
 	}
 
 	if !pubKey.VerifyBytes(vote.SignBytes(chainID), vote.Signature) {
@@ -95,8 +96,49 @@ func (vote *TxVote) ValidateBasic() error {
 	if len(vote.Signature) == 0 {
 		return errors.New("Signature is missing")
 	}
-	if len(vote.Signature) > MaxSignatureSize {
-		return fmt.Errorf("Signature is too big (max: %d)", MaxSignatureSize)
+	if len(vote.Signature) > ttypes.MaxSignatureSize {
+		return fmt.Errorf("Signature is too big (max: %d)", ttypes.MaxSignatureSize)
 	}
 	return nil
+}
+
+//-------------------------------------
+
+// CommitSig is a vote included in a Commit.
+// For now, it is identical to a vote,
+// but in the future it will contain fewer fields
+// to eliminate the redundancy in commits.
+// See https://github.com/tendermint/tendermint/issues/1648.
+type CommitSig TxVote
+
+// String returns the underlying Vote.String()
+func (cs *CommitSig) String() string {
+	return cs.toVote().String()
+}
+
+// toVote converts the CommitSig to a vote.
+// TODO: deprecate for #1648. Converting to Vote will require
+// access to ValidatorSet.
+func (cs *CommitSig) toVote() *TxVote {
+	if cs == nil {
+		return nil
+	}
+	v := TxVote(*cs)
+	return &v
+}
+
+type CanonicalTxVote struct {
+	Height    int64 `binary:"fixed64"`
+	TxHash    cmn.HexBytes
+	Timestamp time.Time
+	ChainID   string
+}
+
+func CanonicalizeTxVote(chainID string, vote *TxVote) CanonicalTxVote {
+	return CanonicalTxVote{
+		Height:    vote.Height,
+		TxHash:    vote.TxHash,
+		Timestamp: vote.Timestamp,
+		ChainID:   chainID,
+	}
 }

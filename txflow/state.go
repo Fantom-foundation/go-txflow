@@ -15,6 +15,7 @@ import (
 	"github.com/tendermint/tendermint/libs/log"
 	tmtime "github.com/tendermint/tendermint/types/time"
 
+	"github.com/andrecronje/babble-abci/txflowstate"
 	cfg "github.com/tendermint/tendermint/config"
 	cstypes "github.com/tendermint/tendermint/consensus/types"
 	tmevents "github.com/tendermint/tendermint/libs/events"
@@ -69,17 +70,16 @@ type TxFlowState struct {
 	privValidator types.PrivValidator // for signing votes
 
 	// store txs and commits
-	txStore TxStore
+	txStore txflowstate.TxStore
 
 	// create and execute txs
-	txExec *TxExecutor
+	txExec *txflowstate.TxExecutor
 
 	// notify us if txs are available
 	txNotifier txNotifier
 
 	// internal state
-	mtx sync.RWMutex
-	cstypes.TxState
+	mtx   sync.RWMutex
 	state sm.State // State until height-1.
 
 	// state changes may be triggered by: msgs from peers,

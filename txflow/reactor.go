@@ -8,6 +8,7 @@ import (
 
 	"github.com/pkg/errors"
 
+	"github.com/andrecronje/babble-abci/types"
 	amino "github.com/tendermint/go-amino"
 	cstypes "github.com/tendermint/tendermint/consensus/types"
 	cmn "github.com/tendermint/tendermint/libs/common"
@@ -15,7 +16,6 @@ import (
 	"github.com/tendermint/tendermint/libs/log"
 	"github.com/tendermint/tendermint/p2p"
 	sm "github.com/tendermint/tendermint/state"
-	"github.com/tendermint/tendermint/types"
 	tmtime "github.com/tendermint/tendermint/types/time"
 )
 
@@ -36,7 +36,7 @@ const (
 type TxFlowReactor struct {
 	p2p.BaseReactor // BaseService + p2p.Switch
 
-	conS *ConsensusState
+	txS *TxFlowState
 
 	mtx      sync.RWMutex
 	fastSync bool
@@ -49,9 +49,9 @@ type ReactorOption func(*TxFlowReactor)
 
 // NewTxFlowReactor returns a new TxFlowReactor with the given
 // txflowState.
-func NewTxFlowReactor(consensusState *ConsensusState, fastSync bool, options ...ReactorOption) *TxFlowReactor {
+func NewTxFlowReactor(txflowState *TxFlowState, fastSync bool, options ...ReactorOption) *TxFlowReactor {
 	txR := &TxFlowReactor{
-		conS:     consensusState,
+		txS:      txflowState,
 		fastSync: fastSync,
 		metrics:  NopMetrics(),
 	}
@@ -342,16 +342,16 @@ func (txR *TxFlowReactor) Receive(chID byte, src p2p.Peer, msgBytes []byte) {
 }
 
 // SetEventBus sets event bus.
-func (conR *ConsensusReactor) SetEventBus(b *types.EventBus) {
-	conR.eventBus = b
-	conR.conS.SetEventBus(b)
+func (txR *TxFlowReactor) SetEventBus(b *types.EventBus) {
+	txR.eventBus = b
+	txR.conS.SetEventBus(b)
 }
 
 // FastSync returns whether the consensus reactor is in fast-sync mode.
-func (conR *ConsensusReactor) FastSync() bool {
-	conR.mtx.RLock()
-	defer conR.mtx.RUnlock()
-	return conR.fastSync
+func (txR *TxFlowReactor) FastSync() bool {
+	txR.mtx.RLock()
+	defer txR.mtx.RUnlock()
+	return txR.fastSync
 }
 
 //--------------------------------------
@@ -359,37 +359,28 @@ func (conR *ConsensusReactor) FastSync() bool {
 // subscribeToBroadcastEvents subscribes for new round steps and votes
 // using internal pubsub defined on state to broadcast
 // them to peers upon receiving.
-func (conR *ConsensusReactor) subscribeToBroadcastEvents() {
+func (txR *TxFlowReactor) subscribeToBroadcastEvents() {
+	const subscriber = "txflow-reactor"
+
+	txR.txS.evsw.AddListenerForEvent(subscriber, types.EventValidTx,
+		func(data tmevents.EventData) {
+			txR.broadcastNewValidTxMessage()
+		})
+
+	txR.txS.evsw.AddListenerForEvent(subscriber, types.TxVote,
+		func(data tmevents.EventData) {
+			txR.broadcastHasTxVoteMessage(data.(*types.TxVote))
+		})
+
+}
+
+func (txR *TxFlowReactor) unsubscribeFromBroadcastEvents() {
 	const subscriber = "consensus-reactor"
-	conR.conS.evsw.AddListenerForEvent(subscriber, types.EventNewRoundStep,
-		func(data tmevents.EventData) {
-			conR.broadcastNewRoundStepMessage(data.(*cstypes.RoundState))
-		})
-
-	conR.conS.evsw.AddListenerForEvent(subscriber, types.EventValidBlock,
-		func(data tmevents.EventData) {
-			conR.broadcastNewValidBlockMessage(data.(*cstypes.RoundState))
-		})
-
-	conR.conS.evsw.AddListenerForEvent(subscriber, types.EventVote,
-		func(data tmevents.EventData) {
-			conR.broadcastHasVoteMessage(data.(*types.Vote))
-		})
-
+	txR.txS.evsw.RemoveListener(subscriber)
 }
 
-func (conR *ConsensusReactor) unsubscribeFromBroadcastEvents() {
-	const subscriber = "consensus-reactor"
-	conR.conS.evsw.RemoveListener(subscriber)
-}
-
-func (conR *ConsensusReactor) broadcastNewRoundStepMessage(rs *cstypes.RoundState) {
-	nrsMsg := makeRoundStepMessage(rs)
-	conR.Switch.Broadcast(StateChannel, cdc.MustMarshalBinaryBare(nrsMsg))
-}
-
-func (conR *ConsensusReactor) broadcastNewValidBlockMessage(rs *cstypes.RoundState) {
-	csMsg := &NewValidBlockMessage{
+/*func (txR *TxFlowReactor) broadcastNewValidTxMessage() {
+	csMsg := &NewValidTxMessage{
 		Height:           rs.Height,
 		Round:            rs.Round,
 		BlockPartsHeader: rs.ProposalBlockParts.Header(),
@@ -397,11 +388,11 @@ func (conR *ConsensusReactor) broadcastNewValidBlockMessage(rs *cstypes.RoundSta
 		IsCommit:         rs.Step == cstypes.RoundStepCommit,
 	}
 	conR.Switch.Broadcast(StateChannel, cdc.MustMarshalBinaryBare(csMsg))
-}
+}*/
 
-// Broadcasts HasVoteMessage to peers that care.
-func (conR *ConsensusReactor) broadcastHasVoteMessage(vote *types.Vote) {
-	msg := &HasVoteMessage{
+// Broadcasts HasTxVoteMessage to peers that care.
+func (txR *TxFlowReactor) broadcastHasTxVoteMessage(vote *types.TxVote) {
+	msg := &HasTxVoteMessage{
 		Height: vote.Height,
 		Round:  vote.Round,
 		Type:   vote.Type,
