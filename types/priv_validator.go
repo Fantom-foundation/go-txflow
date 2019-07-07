@@ -15,7 +15,7 @@ import (
 // that signs votes and proposals, and never double signs.
 type PrivValidator interface {
 	ttypes.PrivValidator
-	SignTxVote(chainID string, tx *types.Tx) error
+	SignTxVote(chainID string, tx *types.Tx) (TxVote, error)
 }
 
 //----------------------------------------

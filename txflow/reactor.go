@@ -43,6 +43,7 @@ type TxFlowReactor struct {
 	mtx      sync.RWMutex
 	fastSync bool
 	eventBus *ttypes.EventBus
+	chainID string
 
 	metrics *Metrics
 }

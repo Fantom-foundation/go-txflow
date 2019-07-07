@@ -1,6 +1,7 @@
 package mempool
 
 import (
+	"github.com/Fantom-foundation/go-txflow/txvotepool"
 	"github.com/Fantom-foundation/go-txflow/types"
 	cfg "github.com/tendermint/tendermint/config"
 	"github.com/tendermint/tendermint/libs/clist"
@@ -11,9 +12,11 @@ import (
 // VoteReactor handles mempool tx signing
 type VoteReactor struct {
 	p2p.BaseReactor
-	config  *cfg.MempoolConfig
-	Mempool *Mempool
-	privval types.PrivValidator
+	config     *cfg.MempoolConfig
+	Mempool    *Mempool
+	privval    types.PrivValidator
+	chainID    string
+	TxVotePool *txvotepool.TxVotePool
 }
 
 // NewVoteReactor returns a new MempoolReactor with the given config and mempool.
@@ -75,7 +78,9 @@ func (vR *VoteReactor) signTxRoutine() {
 		memTx := next.Value.(*mempoolTx)
 
 		//Sign this transaction with private validator and save TxVote in TxVotePool
-		_ = vR.privval.SignTxVote("", &memTx.tx)
+		//Don't supress the error here, this needs work
+		txVote, _ := vR.privval.SignTxVote(vR.chainID, &memTx.tx)
+		vR.TxVotePool.CheckTx(txVote)
 
 		select {
 		case <-next.NextWaitChan():
