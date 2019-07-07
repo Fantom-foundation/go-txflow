@@ -1,4 +1,4 @@
-module github.com/Fantom-foundation/txflow
+module github.com/Fantom-foundation/go-txflow
 
 require (
 	github.com/AndreasBriese/bbloom v0.0.0-20190306092124-e2d15f34fcf9 // indirect

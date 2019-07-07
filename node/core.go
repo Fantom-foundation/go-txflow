@@ -3,8 +3,8 @@ package node
 import (
 	"sort"
 
-	"github.com/Fantom-foundation/txflow/hashgraph"
-	"github.com/Fantom-foundation/txflow/types"
+	"github.com/Fantom-foundation/go-txflow/hashgraph"
+	"github.com/Fantom-foundation/go-txflow/types"
 	"github.com/tendermint/tendermint/crypto"
 	cmn "github.com/tendermint/tendermint/libs/common"
 	"github.com/tendermint/tendermint/libs/log"

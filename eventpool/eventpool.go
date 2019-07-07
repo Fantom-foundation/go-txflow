@@ -9,8 +9,8 @@ import (
 
 	"github.com/pkg/errors"
 
-	"github.com/Fantom-foundation/txflow/config"
-	"github.com/Fantom-foundation/txflow/types"
+	"github.com/Fantom-foundation/go-txflow/config"
+	"github.com/Fantom-foundation/go-txflow/types"
 	abci "github.com/tendermint/tendermint/abci/types"
 	auto "github.com/tendermint/tendermint/libs/autofile"
 	"github.com/tendermint/tendermint/libs/clist"

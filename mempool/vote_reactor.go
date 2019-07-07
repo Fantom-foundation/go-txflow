@@ -1,7 +1,7 @@
 package mempool
 
 import (
-	"github.com/Fantom-foundation/txflow/types"
+	"github.com/Fantom-foundation/go-txflow/types"
 	cfg "github.com/tendermint/tendermint/config"
 	"github.com/tendermint/tendermint/libs/clist"
 	"github.com/tendermint/tendermint/libs/log"

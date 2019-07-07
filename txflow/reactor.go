@@ -8,8 +8,8 @@ import (
 
 	"github.com/pkg/errors"
 
-	txflowtypes "github.com/Fantom-foundation/txflow/txflow/types"
-	"github.com/Fantom-foundation/txflow/types"
+	txflowtypes "github.com/Fantom-foundation/go-txflow/txflow/types"
+	"github.com/Fantom-foundation/go-txflow/types"
 	amino "github.com/tendermint/go-amino"
 	cstypes "github.com/tendermint/tendermint/consensus/types"
 	cmn "github.com/tendermint/tendermint/libs/common"

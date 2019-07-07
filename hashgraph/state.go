@@ -1,7 +1,7 @@
 package hashgraph
 
 import (
-	"github.com/Fantom-foundation/txflow/types"
+	"github.com/Fantom-foundation/go-txflow/types"
 	ttypes "github.com/tendermint/tendermint/types"
 )
 

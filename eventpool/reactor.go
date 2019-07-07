@@ -9,8 +9,8 @@ import (
 
 	amino "github.com/tendermint/go-amino"
 
-	"github.com/Fantom-foundation/txflow/config"
-	"github.com/Fantom-foundation/txflow/types"
+	"github.com/Fantom-foundation/go-txflow/config"
+	"github.com/Fantom-foundation/go-txflow/types"
 	"github.com/tendermint/tendermint/libs/clist"
 	"github.com/tendermint/tendermint/libs/log"
 	"github.com/tendermint/tendermint/p2p"

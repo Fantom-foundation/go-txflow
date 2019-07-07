@@ -11,9 +11,9 @@ import (
 	"sync"
 	"time"
 
-	conf "github.com/Fantom-foundation/txflow/config"
-	"github.com/Fantom-foundation/txflow/eventpool"
-	"github.com/Fantom-foundation/txflow/hashgraph"
+	conf "github.com/Fantom-foundation/go-txflow/config"
+	"github.com/Fantom-foundation/go-txflow/eventpool"
+	"github.com/Fantom-foundation/go-txflow/hashgraph"
 	"github.com/andrecronje/babble/src/service"
 
 	_ "net/http/pprof"
