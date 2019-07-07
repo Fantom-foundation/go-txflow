@@ -69,7 +69,16 @@ func (txFVR *TxFlowVoteReactor) checkMaj23Routine() {
 			}
 		}
 
-		memTx := next.Value.(*mempoolTxVote)
+		//memTx := next.Value.(*mempoolTxVote)
+		//memTx.tx.TxHash
+		//Get TxHash
+		//Add Vote for TxHash
+		//Check all Votes already received for TxHash
+		//Compare with Validator Set
+		//If stake > 2n/3 process via commitTx
+		//Remove tx from mempool
+		//Remove tx from votepool
+		//Add tx to txstore
 
 		//Check Vote for majority 2n/3
 

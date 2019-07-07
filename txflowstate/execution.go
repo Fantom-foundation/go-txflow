@@ -4,12 +4,13 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/Fantom-foundation/go-txflow/txvotepool"
 	abci "github.com/tendermint/tendermint/abci/types"
 	"github.com/tendermint/tendermint/libs/fail"
 	"github.com/tendermint/tendermint/libs/log"
 	"github.com/tendermint/tendermint/proxy"
 	"github.com/tendermint/tendermint/state"
-	"github.com/tendermint/tendermint/types"
+	ttypes "github.com/tendermint/tendermint/types"
 )
 
 //-----------------------------------------------------------------------------
@@ -23,11 +24,12 @@ type TxExecutor struct {
 	proxyApp proxy.AppConnConsensus
 
 	// events
-	eventBus types.BlockEventPublisher
+	eventBus ttypes.BlockEventPublisher
 
 	// manage the mempool lock during commit
 	// and update both with block results after commit.
-	mempool Mempool
+	mempool    Mempool
+	txVotePool txvotepool.TxVotePool
 
 	logger log.Logger
 
@@ -44,13 +46,14 @@ func TxExecutorWithMetrics(metrics *Metrics) TxExecutorOption {
 
 // NewTxExecutor returns a new TxExecutor with a NopEventBus.
 // Call SetEventBus to provide one.
-func NewTxExecutor(logger log.Logger, proxyApp proxy.AppConnConsensus, mempool Mempool, options ...TxExecutorOption) *TxExecutor {
+func NewTxExecutor(logger log.Logger, proxyApp proxy.AppConnConsensus, mempool Mempool, txVotePool txvotepool.TxVotePool, options ...TxExecutorOption) *TxExecutor {
 	res := &TxExecutor{
-		proxyApp: proxyApp,
-		eventBus: types.NopEventBus{},
-		mempool:  mempool,
-		logger:   logger,
-		metrics:  NopMetrics(),
+		proxyApp:   proxyApp,
+		eventBus:   ttypes.NopEventBus{},
+		mempool:    mempool,
+		txVotePool: txVotePool,
+		logger:     logger,
+		metrics:    NopMetrics(),
 	}
 
 	for _, option := range options {
@@ -62,13 +65,13 @@ func NewTxExecutor(logger log.Logger, proxyApp proxy.AppConnConsensus, mempool M
 
 // SetEventBus - sets the event bus for publishing block related events.
 // If not called, it defaults to types.NopEventBus.
-func (txExec *TxExecutor) SetEventBus(eventBus types.BlockEventPublisher) {
+func (txExec *TxExecutor) SetEventBus(eventBus ttypes.BlockEventPublisher) {
 	txExec.eventBus = eventBus
 }
 
 // ApplyTx validates the tx against the state, executes it against the app,
 // fires the relevant events, commits the app, and saves responses.
-func (txExec *TxExecutor) ApplyTx(tx *types.Tx) error {
+func (txExec *TxExecutor) ApplyTx(tx *ttypes.Tx) error {
 
 	startTime := time.Now().UnixNano()
 	abciResponses, err := execTxOnProxyApp(txExec.logger, txExec.proxyApp, tx)
@@ -101,7 +104,7 @@ func (txExec *TxExecutor) ApplyTx(tx *types.Tx) error {
 // The Mempool must be locked during commit and update because state is
 // typically reset on Commit and old txs must be replayed against committed
 // state before new txs are run in the mempool, lest they be invalid.
-func (txExec *TxExecutor) Commit(tx *types.Tx) ([]byte, error) {
+func (txExec *TxExecutor) Commit(tx *ttypes.Tx) ([]byte, error) {
 	txExec.mempool.Lock()
 	defer txExec.mempool.Unlock()
 
@@ -142,7 +145,7 @@ func (txExec *TxExecutor) Commit(tx *types.Tx) ([]byte, error) {
 func execTxOnProxyApp(
 	logger log.Logger,
 	proxyAppConn proxy.AppConnConsensus,
-	tx *types.Tx,
+	tx *ttypes.Tx,
 ) (*state.ABCIResponses, error) {
 	abciResponses := NewABCIResponses()
 
@@ -168,8 +171,8 @@ func execTxOnProxyApp(
 // Fire NewBlock, NewBlockHeader.
 // Fire TxEvent for every tx.
 // NOTE: if Tendermint crashes before commit, some or all of these events may be published again.
-func fireEvents(logger log.Logger, eventBus types.BlockEventPublisher, tx *types.Tx, abciResponses *state.ABCIResponses) {
-	eventBus.PublishEventTx(types.EventDataTx{TxResult: types.TxResult{
+func fireEvents(logger log.Logger, eventBus ttypes.BlockEventPublisher, tx *ttypes.Tx, abciResponses *state.ABCIResponses) {
+	eventBus.PublishEventTx(ttypes.EventDataTx{TxResult: ttypes.TxResult{
 		Tx:     *tx,
 		Result: *(abciResponses.DeliverTx[0]),
 	}})
@@ -182,7 +185,7 @@ func fireEvents(logger log.Logger, eventBus types.BlockEventPublisher, tx *types
 // It returns the application root hash (result of abci.Commit).
 func ExecCommitTx(
 	appConnConsensus proxy.AppConnConsensus,
-	tx *types.Tx,
+	tx *ttypes.Tx,
 	logger log.Logger,
 ) ([]byte, error) {
 	_, err := execTxOnProxyApp(logger, appConnConsensus, tx)
