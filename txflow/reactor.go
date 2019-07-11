@@ -8,7 +8,6 @@ import (
 
 	"github.com/pkg/errors"
 
-	txflowtypes "github.com/Fantom-foundation/go-txflow/txflow/types"
 	"github.com/Fantom-foundation/go-txflow/types"
 	amino "github.com/tendermint/go-amino"
 	cstypes "github.com/tendermint/tendermint/consensus/types"
@@ -38,14 +37,14 @@ const (
 type TxFlowReactor struct {
 	p2p.BaseReactor // BaseService + p2p.Switch
 
-  // State keeps track of the current pending transactions and their vote state
+	// State keeps track of the current pending transactions and their vote state
 	txS *TxFlowState
 
-	mtx      sync.RWMutex
+	mtx sync.RWMutex
 
 	// Broadcast new committed tx events to the application layer
 	eventBus *ttypes.EventBus
-	chainID string
+	chainID  string
 
 	metrics *Metrics
 }
@@ -711,9 +710,9 @@ type PeerState struct {
 	peer   p2p.Peer
 	logger log.Logger
 
-	mtx   sync.Mutex              // NOTE: Modify below using setters, never directly.
-	PTXS  txflowtypes.PeerTxState `json:"tx_state"` // Exposed.
-	Stats *peerStateStats         `json:"stats"`    // Exposed.
+	mtx   sync.Mutex      // NOTE: Modify below using setters, never directly.
+	PTXS  PeerTxState     `json:"tx_state"` // Exposed.
+	Stats *peerStateStats `json:"stats"`    // Exposed.
 }
 
 // peerStateStats holds internal statistics for a peer.
@@ -731,7 +730,7 @@ func NewPeerState(peer p2p.Peer) *PeerState {
 	return &PeerState{
 		peer:   peer,
 		logger: log.NewNopLogger(),
-		PTXS:   txflowtypes.PeerTxState{},
+		PTXS:   PeerTxState{},
 		Stats:  &peerStateStats{},
 	}
 }
@@ -745,7 +744,7 @@ func (ps *PeerState) SetLogger(logger log.Logger) *PeerState {
 
 // GetTxState returns a shallow copy of the PeerTxState.
 // There's no point in mutating it since it won't change PeerState.
-func (ps *PeerState) GetTxState() *txflowtypes.PeerTxState {
+func (ps *PeerState) GetTxState() *PeerTxState {
 	ps.mtx.Lock()
 	defer ps.mtx.Unlock()
 

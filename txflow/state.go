@@ -17,11 +17,11 @@ import (
 	tmtime "github.com/tendermint/tendermint/types/time"
 
 	"github.com/Fantom-foundation/go-txflow/txflowstate"
+	"github.com/Fantom-foundation/go-txflow/types"
 	cstypes "github.com/tendermint/tendermint/consensus/types"
 	tmevents "github.com/tendermint/tendermint/libs/events"
 	"github.com/tendermint/tendermint/p2p"
 	sm "github.com/tendermint/tendermint/state"
-	"github.com/tendermint/tendermint/types"
 )
 
 //-----------------------------------------------------------------------------
@@ -66,6 +66,14 @@ type voteNotifier interface {
 type TxFlowState struct {
 	cmn.BaseService
 
+	Height                    int64
+	StartTime                 time.Time
+	CommitTime                time.Time
+	Validators                ttypes.ValidatorSet
+	TxVoteSets                map[string]*types.TxVoteSet
+	LastValidators            *ttypes.ValidatorSet
+	TriggeredTimeoutPrecommit bool
+
 	// store txs and commits
 	txStore txflowstate.TxStore
 
@@ -93,7 +101,7 @@ type TxFlowState struct {
 
 	// we use eventBus to trigger msg broadcasts in the reactor,
 	// and to notify external subscribers, eg. through a websocket
-	eventBus *types.EventBus
+	eventBus *ttypes.EventBus
 
 	// a Write-Ahead Log ensures we can recover from any kind of crash
 	// and helps us avoid signing conflicting votes
@@ -102,9 +110,9 @@ type TxFlowState struct {
 	doWALCatchup bool // determines if we even try to do the catchup
 
 	// some functions can be overwritten for testing
-	decideTx  func(tx *types.Tx)
-	doPrevote func(tx *types.Tx)
-	setTx     func(tx *types.Tx) error
+	decideTx  func(tx *ttypes.Tx)
+	doPrevote func(tx *ttypes.Tx)
+	setTx     func(tx *ttypes.Tx) error
 
 	// closed when we finish shutting down
 	done chan struct{}
