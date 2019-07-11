@@ -23,19 +23,19 @@ type TxVoteSet struct {
 	txHash cmn.HexBytes
 
 	mtx   sync.Mutex
-	votes map[cmn.HexBytes]*TxVote // Primary votes to share
-	sum   int64                    // Sum of voting power for seen votes, discounting conflicts
+	votes map[string]*TxVote // Primary votes to share
+	sum   int64              // Sum of voting power for seen votes, discounting conflicts
 	maj23 bool
 }
 
 // NewTxVoteSet Constructs a new VoteSet struct used to accumulate votes for given height/round.
 func NewTxVoteSet(chainID string, height int64, txHash cmn.HexBytes, valSet *types.ValidatorSet) *TxVoteSet {
-	return &VoteSet{
+	return &TxVoteSet{
 		chainID: chainID,
 		height:  height,
 		valSet:  valSet,
 		txHash:  txHash,
-		votes:   make(map[cmn.HexBytes]*TxVote, valSet.Size()),
+		votes:   make(map[string]*TxVote, valSet.Size()),
 		sum:     0,
 		maj23:   false,
 	}
@@ -88,7 +88,7 @@ func (voteSet *TxVoteSet) addVote(vote *TxVote) (added bool, err error) {
 	}
 
 	// If we already know of this vote, return false.
-	if existing, ok := voteSet.getVote(vote.ValidatorAddress, vote.TxHash); ok {
+	if existing, ok := voteSet.getVote(vote.ValidatorAddress); ok {
 		if bytes.Equal(existing.Signature, vote.Signature) {
 			return false, nil // duplicate
 		}
@@ -114,7 +114,7 @@ func (voteSet *TxVoteSet) addVote(vote *TxVote) (added bool, err error) {
 
 // Returns (vote, true) if vote exists for valAddress and txKey.
 func (voteSet *TxVoteSet) getVote(valAddress cmn.HexBytes) (vote *TxVote, ok bool) {
-	if existing := voteSet.votes[valAddress]; existing != nil {
+	if existing := voteSet.votes[valAddress.String()]; existing != nil {
 		return existing, true
 	}
 	return nil, false
@@ -124,7 +124,7 @@ func (voteSet *TxVoteSet) getVote(valAddress cmn.HexBytes) (vote *TxVote, ok boo
 // If conflicting vote exists, returns it.
 func (voteSet *TxVoteSet) addVerifiedVote(vote *TxVote, votingPower int64) (added bool, conflicting *TxVote) {
 	// Already exists in voteSet.votes?
-	if existing := voteSet.votes[vote.ValidatorAddress]; existing != nil {
+	if existing := voteSet.votes[vote.ValidatorAddress.String()]; existing != nil {
 		if bytes.Equal(existing.TxHash, vote.TxHash) {
 			cmn.PanicSanity("addVerifiedVote does not expect duplicate votes")
 		} else {
@@ -133,7 +133,7 @@ func (voteSet *TxVoteSet) addVerifiedVote(vote *TxVote, votingPower int64) (adde
 		// Otherwise don't add it to voteSet.votes
 	} else {
 		// Add to voteSet.votes and incr .sum
-		voteSet.votes[vote.ValidatorAddress] = vote
+		voteSet.votes[vote.ValidatorAddress.String()] = vote
 		voteSet.sum += votingPower
 	}
 
@@ -154,7 +154,7 @@ func (voteSet *TxVoteSet) GetByAddress(address cmn.HexBytes) *TxVote {
 	}
 	voteSet.mtx.Lock()
 	defer voteSet.mtx.Unlock()
-	return voteSet.votes[address]
+	return voteSet.votes[address.String()]
 }
 
 func (voteSet *TxVoteSet) HasTwoThirdsMajority() bool {
@@ -195,27 +195,6 @@ func (voteSet *TxVoteSet) sumTotalFrac() (int64, int64, float64) {
 	voted, total := voteSet.sum, voteSet.valSet.TotalVotingPower()
 	fracVoted := float64(voted) / float64(total)
 	return voted, total, fracVoted
-}
-
-//--------------------------------------------------------------------------------
-// Commit
-
-func (voteSet *TxVoteSet) MakeCommit() *types.Commit {
-	voteSet.mtx.Lock()
-	defer voteSet.mtx.Unlock()
-
-	// Make sure we have a 2/3 majority
-	if voteSet.maj23 {
-		cmn.PanicSanity("Cannot MakeCommit() unless a txHash has +2/3")
-	}
-
-	// For every validator
-	commitSigs := make([]*CommitSig, len(voteSet.votes))
-	for _, v := range voteSet.votes {
-		index, val := voteSet.valSet.GetByAddress(v.ValidatorAddress)
-		commitSigs[index] = v.CommitSig()
-	}
-	return NewCommit(*voteSet.maj23, commitSigs)
 }
 
 //--------------------------------------------------------------------------------

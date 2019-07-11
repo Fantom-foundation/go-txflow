@@ -7,7 +7,6 @@ import (
 
 	"github.com/tendermint/tendermint/crypto"
 	"github.com/tendermint/tendermint/crypto/ed25519"
-	"github.com/tendermint/tendermint/types"
 	ttypes "github.com/tendermint/tendermint/types"
 )
 
@@ -15,7 +14,7 @@ import (
 // that signs votes and proposals, and never double signs.
 type PrivValidator interface {
 	ttypes.PrivValidator
-	SignTxVote(chainID string, tx *types.Tx) (TxVote, error)
+	SignTxVote(chainID string, vote *TxVote) error
 }
 
 //----------------------------------------

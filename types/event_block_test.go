@@ -30,7 +30,7 @@ func TestEventBlockAddEvidence(t *testing.T) {
 	txs := []types.Tx{types.Tx("foo"), types.Tx("bar")}
 	h := int64(3)
 
-	_, valSet, _ := randVoteSet(h-1, 1, types.PrecommitType, 10, 1)
+	_, valSet, _ := randVoteSet(h-1, 10, 1)
 
 	ev := types.NewMockGoodEvidence(h, 0, valSet.Validators[0].Address)
 	evList := []types.Evidence{ev}
@@ -47,7 +47,7 @@ func TestEventBlockValidateBasic(t *testing.T) {
 	txs := []types.Tx{types.Tx("foo"), types.Tx("bar")}
 	h := int64(3)
 
-	_, valSet, _ := randVoteSet(h-1, 1, types.PrecommitType, 10, 1)
+	_, valSet, _ := randVoteSet(h-1, 10, 1)
 
 	ev := types.NewMockGoodEvidence(h, 0, valSet.Validators[0].Address)
 	evList := []types.Evidence{ev}
@@ -101,7 +101,7 @@ func TestEventBlockMakePartSetWithEvidence(t *testing.T) {
 
 	h := int64(3)
 
-	_, valSet, _ := randVoteSet(h-1, 1, types.PrecommitType, 10, 1)
+	_, valSet, _ := randVoteSet(h-1, 10, 1)
 
 	ev := types.NewMockGoodEvidence(h, 0, valSet.Validators[0].Address)
 	evList := []types.Evidence{ev}
@@ -115,7 +115,7 @@ func TestEventBlockHashesTo(t *testing.T) {
 	assert.False(t, (*EventBlock)(nil).HashesTo(nil))
 
 	h := int64(3)
-	_, valSet, _ := randVoteSet(h-1, 1, types.PrecommitType, 10, 1)
+	_, valSet, _ := randVoteSet(h-1, 10, 1)
 
 	ev := types.NewMockGoodEvidence(h, 0, valSet.Validators[0].Address)
 	evList := []types.Evidence{ev}
@@ -207,7 +207,7 @@ func TestMaxHeaderBytes(t *testing.T) {
 }
 
 // NOTE: privValidators are in order
-func randVoteSet(height int64, round int, type_ types.SignedMsgType, numValidators int, votingPower int64) (*types.VoteSet, *types.ValidatorSet, []types.PrivValidator) {
-	valSet, privValidators := types.RandValidatorSet(numValidators, votingPower)
-	return types.NewVoteSet("test_chain_id", height, round, type_, valSet), valSet, privValidators
+func randVoteSet(height int64, numValidators int, votingPower int64) (*TxVoteSet, *types.ValidatorSet, []PrivValidator) {
+	valSet, privValidators := RandValidatorSet(numValidators, votingPower)
+	return NewTxVoteSet("test_chain_id", height, types.Tx{}.Hash(), valSet), valSet, privValidators
 }
