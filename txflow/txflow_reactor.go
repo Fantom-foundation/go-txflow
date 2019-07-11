@@ -1,6 +1,7 @@
-package txvotepool
+package txflow
 
 import (
+	"github.com/Fantom-foundation/go-txflow/txvotepool"
 	"github.com/tendermint/tendermint/libs/clist"
 	"github.com/tendermint/tendermint/libs/log"
 	"github.com/tendermint/tendermint/p2p"
@@ -9,13 +10,13 @@ import (
 // TxFlowVoteReactor handles consensus commits
 type TxFlowVoteReactor struct {
 	p2p.BaseReactor
-	TxVotePool *TxVotePool
+	TxVotePool *txvotepool.TxVotePool
 }
 
 // NewTxFlowVoteReactor returns a new MempoolReactor with the given config and mempool.
-func NewTxFlowVoteReactor(mempool *TxVotePool) *TxFlowVoteReactor {
+func NewTxFlowVoteReactor(txvotepool *txvotepool.TxVotePool) *TxFlowVoteReactor {
 	txFVR := &TxFlowVoteReactor{
-		TxVotePool: mempool,
+		TxVotePool: txvotepool,
 	}
 	txFVR.BaseReactor = *p2p.NewBaseReactor("TxFlowVoteReactor", txFVR)
 	return txFVR
@@ -66,7 +67,7 @@ func (txFVR *TxFlowVoteReactor) checkMaj23Routine() {
 			}
 		}
 
-		//memTx := next.Value.(*mempoolTxVote)
+		memTx := next.Value.(*mempoolTxVote)
 		//memTx.tx.TxHash
 		//Get TxHash
 		//Add Vote for TxHash
