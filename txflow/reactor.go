@@ -38,10 +38,12 @@ const (
 type TxFlowReactor struct {
 	p2p.BaseReactor // BaseService + p2p.Switch
 
+  // State keeps track of the current pending transactions and their vote state
 	txS *TxFlowState
 
 	mtx      sync.RWMutex
-	fastSync bool
+
+	// Broadcast new committed tx events to the application layer
 	eventBus *ttypes.EventBus
 	chainID string
 

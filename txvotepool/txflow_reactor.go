@@ -1,7 +1,6 @@
 package txvotepool
 
 import (
-	cfg "github.com/tendermint/tendermint/config"
 	"github.com/tendermint/tendermint/libs/clist"
 	"github.com/tendermint/tendermint/libs/log"
 	"github.com/tendermint/tendermint/p2p"
@@ -10,14 +9,12 @@ import (
 // TxFlowVoteReactor handles consensus commits
 type TxFlowVoteReactor struct {
 	p2p.BaseReactor
-	config     *cfg.MempoolConfig
 	TxVotePool *TxVotePool
 }
 
 // NewTxFlowVoteReactor returns a new MempoolReactor with the given config and mempool.
-func NewTxFlowVoteReactor(config *cfg.MempoolConfig, mempool *TxVotePool) *TxFlowVoteReactor {
+func NewTxFlowVoteReactor(mempool *TxVotePool) *TxFlowVoteReactor {
 	txFVR := &TxFlowVoteReactor{
-		config:     config,
 		TxVotePool: mempool,
 	}
 	txFVR.BaseReactor = *p2p.NewBaseReactor("TxFlowVoteReactor", txFVR)

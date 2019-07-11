@@ -13,10 +13,10 @@ import (
 	cmn "github.com/tendermint/tendermint/libs/common"
 	"github.com/tendermint/tendermint/libs/fail"
 	"github.com/tendermint/tendermint/libs/log"
+	ttypes "github.com/tendermint/tendermint/types"
 	tmtime "github.com/tendermint/tendermint/types/time"
 
 	"github.com/Fantom-foundation/go-txflow/txflowstate"
-	cfg "github.com/tendermint/tendermint/config"
 	cstypes "github.com/tendermint/tendermint/consensus/types"
 	tmevents "github.com/tendermint/tendermint/libs/events"
 	"github.com/tendermint/tendermint/p2p"
@@ -44,6 +44,7 @@ type msgInfo struct {
 }
 
 // internally generated messages which may update the state
+// Timeouts are used for refresher states, to re-transmit deadlocked transactions
 type timeoutInfo struct {
 	Duration time.Duration `json:"duration"`
 	Height   int64         `json:"height"`
@@ -53,9 +54,9 @@ func (ti *timeoutInfo) String() string {
 	return fmt.Sprintf("%v ; %d/%d %v", ti.Duration, ti.Height)
 }
 
-// interface to the mempool
-type txNotifier interface {
-	TxsAvailable() <-chan struct{}
+// interface to the votepool
+type voteNotifier interface {
+	VoteAvailable() <-chan struct{}
 }
 
 // TxFlowState handles execution of the txflow algorithm.
@@ -65,21 +66,19 @@ type txNotifier interface {
 type TxFlowState struct {
 	cmn.BaseService
 
-	// config details
-	config        *cfg.ConsensusConfig
-	privValidator types.PrivValidator // for signing votes
-
 	// store txs and commits
 	txStore txflowstate.TxStore
 
-	// create and execute txs
+	// execute finalized txs
 	txExec *txflowstate.TxExecutor
 
-	// notify us if txs are available
-	txNotifier txNotifier
+	// notify us if votes are available
+	voteNotifier voteNotifier
 
 	// internal state
-	mtx   sync.RWMutex
+	mtx sync.RWMutex
+
+	// This is the blockchain state, which essentially becomes a BFT timer
 	state sm.State // State until height-1.
 
 	// state changes may be triggered by: msgs from peers,
@@ -102,9 +101,6 @@ type TxFlowState struct {
 	replayMode   bool // so we don't log signing errors during replay
 	doWALCatchup bool // determines if we even try to do the catchup
 
-	// for tests where we want to limit the number of transitions the state makes
-	nSteps int
-
 	// some functions can be overwritten for testing
 	decideTx  func(tx *types.Tx)
 	doPrevote func(tx *types.Tx)
@@ -126,19 +122,16 @@ type StateOption func(*TxFlowState)
 
 // NewTxFlowState returns a new TxFlowState.
 func NewTxFlowState(
-	config *cfg.ConsensusConfig,
 	state sm.State,
-	blockExec *sm.BlockExecutor,
-	blockStore sm.BlockStore,
-	txNotifier txNotifier,
-	evpool evidencePool,
+	txExec *txflowstate.TxExecutor,
+	txStore txflowstate.TxStore,
+	voteNotifier voteNotifier,
 	options ...StateOption,
-) *ConsensusState {
-	cs := &ConsensusState{
-		config:           config,
-		blockExec:        blockExec,
-		blockStore:       blockStore,
-		txNotifier:       txNotifier,
+) *TxFlowState {
+	ts := &TxFlowState{
+		txExec:           txExec,
+		txStore:          txStore,
+		voteNotifier:     voteNotifier,
 		peerMsgQueue:     make(chan msgInfo, msgQueueSize),
 		internalMsgQueue: make(chan msgInfo, msgQueueSize),
 		timeoutTicker:    NewTimeoutTicker(),
@@ -146,40 +139,39 @@ func NewTxFlowState(
 		done:             make(chan struct{}),
 		doWALCatchup:     true,
 		wal:              nilWAL{},
-		evpool:           evpool,
 		evsw:             tmevents.NewEventSwitch(),
 		metrics:          NopMetrics(),
 	}
 	// set function defaults (may be overwritten before calling Start)
-	cs.decideProposal = cs.defaultDecideProposal
-	cs.doPrevote = cs.defaultDoPrevote
-	cs.setProposal = cs.defaultSetProposal
+	ts.decideProposal = ts.defaultDecideProposal
+	ts.doPrevote = ts.defaultDoPrevote
+	ts.setProposal = ts.defaultSetProposal
 
-	cs.updateToState(state)
+	ts.updateToState(state)
 
 	// Don't call scheduleRound0 yet.
 	// We do that upon Start().
-	cs.reconstructLastCommit(state)
-	cs.BaseService = *cmn.NewBaseService(nil, "ConsensusState", cs)
+	ts.reconstructLastCommit(state)
+	ts.BaseService = *cmn.NewBaseService(nil, "TxFlowState", ts)
 	for _, option := range options {
-		option(cs)
+		option(ts)
 	}
-	return cs
+	return ts
 }
 
 //----------------------------------------
 // Public interface
 
 // SetLogger implements Service.
-func (cs *ConsensusState) SetLogger(l log.Logger) {
-	cs.BaseService.Logger = l
-	cs.timeoutTicker.SetLogger(l)
+func (ts *TxFlowState) SetLogger(l log.Logger) {
+	ts.BaseService.Logger = l
+	ts.timeoutTicker.SetLogger(l)
 }
 
 // SetEventBus sets event bus.
-func (cs *ConsensusState) SetEventBus(b *types.EventBus) {
-	cs.eventBus = b
-	cs.blockExec.SetEventBus(b)
+func (ts *TxFlowState) SetEventBus(b *ttypes.EventBus) {
+	ts.eventBus = b
+	ts.txExec.SetEventBus(b)
 }
 
 // StateMetrics sets the metrics.
@@ -188,13 +180,13 @@ func StateMetrics(metrics *Metrics) StateOption {
 }
 
 // String returns a string.
-func (cs *ConsensusState) String() string {
+func (ts *TxFlowState) String() string {
 	// better not to access shared variables
-	return fmt.Sprintf("ConsensusState") //(H:%v R:%v S:%v", cs.Height, cs.Round, cs.Step)
+	return fmt.Sprintf("TxFlowState") //(H:%v R:%v S:%v", cs.Height, cs.Round, cs.Step)
 }
 
 // GetState returns a copy of the chain state.
-func (cs *ConsensusState) GetState() sm.State {
+func (ts *TxFlowState) GetState() sm.State {
 	cs.mtx.RLock()
 	defer cs.mtx.RUnlock()
 	return cs.state.Copy()
@@ -1725,25 +1717,4 @@ func (cs *ConsensusState) signAddVote(type_ types.SignedMsgType, hash []byte, he
 	cs.Logger.Error("Error signing vote", "height", cs.Height, "round", cs.Round, "vote", vote, "err", err)
 	//}
 	return nil
-}
-
-//---------------------------------------------------------
-
-func CompareHRS(h1 int64, r1 int, s1 cstypes.RoundStepType, h2 int64, r2 int, s2 cstypes.RoundStepType) int {
-	if h1 < h2 {
-		return -1
-	} else if h1 > h2 {
-		return 1
-	}
-	if r1 < r2 {
-		return -1
-	} else if r1 > r2 {
-		return 1
-	}
-	if s1 < s2 {
-		return -1
-	} else if s1 > s2 {
-		return 1
-	}
-	return 0
 }

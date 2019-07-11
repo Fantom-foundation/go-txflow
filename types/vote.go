@@ -16,6 +16,16 @@ const (
 	MaxVoteBytes int64 = 223
 )
 
+/*func NewConflictingVoteError(val *types.Validator, voteA, voteB *TxVote) *ErrVoteConflictingVotes {
+	return &types.ErrVoteConflictingVotes{
+		&DuplicateVoteEvidence{
+			PubKey: val.PubKey,
+			VoteA:  voteA,
+			VoteB:  voteB,
+		},
+	}
+}*/
+
 var (
 	ErrVoteInvalidSignature          = errors.New("Invalid signature")
 	ErrVoteInvalidTxHash             = errors.New("Invalid tx hash")

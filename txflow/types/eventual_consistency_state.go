@@ -5,19 +5,25 @@ import (
 	"fmt"
 	"time"
 
+	types "github.com/Fantom-foundation/go-txflow/types"
 	cmn "github.com/tendermint/tendermint/libs/common"
-	"github.com/tendermint/tendermint/types"
+	ttypes "github.com/tendermint/tendermint/types"
 )
 
-// RoundState defines the internal consensus state.
-// NOTE: Not thread safe. Should only be manipulated by functions downstream
-// of the cs.receiveRoutine
-type RoundState struct {
-	Height         int64               `json:"height"` // Height we are working on
-	StartTime      time.Time           `json:"start_time"`
-	CommitTime     time.Time           `json:"commit_time"` // Subjective time when +2/3 precommits for Block at Round were found
-	Validators     *types.ValidatorSet `json:"validators"`
-	LastValidators *types.ValidatorSet `json:"last_validators"`
+//-----------------------------------------------------------------------------
+
+// ECState defines the internal consensus state.
+type ECState struct {
+	Height                    int64                `json:"height"` // Height we are working on
+	StartTime                 time.Time            `json:"start_time"`
+	CommitTime                time.Time            `json:"commit_time"` // Subjective time when +2/3 precommits for Block at Round were found
+	Validators                *ttypes.ValidatorSet `json:"validators"`
+	TxVotes                   map[cmn.HexBytes]*types.TxVote
+	Votes                     *HeightVoteSet      `json:"votes"`
+	CommitRound               int                 `json:"commit_round"` //
+	LastCommit                *types.VoteSet      `json:"last_commit"`  // Last precommits at Height-1
+	LastValidators            *types.ValidatorSet `json:"last_validators"`
+	TriggeredTimeoutPrecommit bool                `json:"triggered_timeout_precommit"`
 }
 
 // Compressed version of the RoundState for use in RPC
