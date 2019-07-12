@@ -15,72 +15,16 @@ import (
 	"github.com/tendermint/tendermint/libs/clist"
 	cmn "github.com/tendermint/tendermint/libs/common"
 	"github.com/tendermint/tendermint/libs/log"
+	"github.com/tendermint/tendermint/mempool"
 )
-
-// TxVoteInfo are parameters that get passed when attempting to add a tx vote to the
-// txvotepool.
-type TxVoteInfo struct {
-	// We don't use p2p.ID here because it's too big. The gain is to store max 2
-	// bytes with each tx vote to identify the sender rather than 20 bytes.
-	PeerID uint16
-}
-
-var (
-	// ErrTxVoteInCache is returned to the client if we saw tx earlier
-	ErrTxVoteInCache = errors.New("TxVote already exists in cache")
-
-	// ErrTxVoteTooLarge means the txvote is too big to be sent in a message to other peers
-	ErrTxVoteTooLarge = fmt.Errorf("TxVote too large. Max size is %d", maxTxSize)
-)
-
-// ErrMempoolIsFull means Tendermint & an application can't handle that much load
-type ErrMempoolIsFull struct {
-	numTxs int
-	maxTxs int
-
-	txsBytes    int64
-	maxTxsBytes int64
-}
-
-func (e ErrMempoolIsFull) Error() string {
-	return fmt.Sprintf(
-		"TxVotePool is full: number of txs %d (max: %d), total txs bytes %d (max: %d)",
-		e.numTxs, e.maxTxs,
-		e.txsBytes, e.maxTxsBytes)
-}
-
-// ErrPreCheck is returned when tx is too big
-type ErrPreCheck struct {
-	Reason error
-}
-
-func (e ErrPreCheck) Error() string {
-	return e.Reason.Error()
-}
-
-// IsPreCheckError returns true if err is due to pre check failure.
-func IsPreCheckError(err error) bool {
-	_, ok := err.(ErrPreCheck)
-	return ok
-}
-
-// TxVoteID is the hex encoded hash of the bytes as a types.Tx.
-func TxVoteID(tx types.TxVote) string {
-	return string(tx.Signature)
-}
-
-// txVoteKey is the fixed length array sha256 hash used as the key in maps.
-func txVoteKey(tx types.TxVote) [sha256.Size]byte {
-	return sha256.Sum256(tx.Signature)
-}
 
 // TxVotePool is an ordered in-memory pool for votes before they are proposed in a consensus
 // round.
 type TxVotePool struct {
-	config   *cfg.MempoolConfig
-	proxyMtx sync.Mutex
+	config *cfg.MempoolConfig
 
-	txs *clist.CList // concurrent linked-list of good txs
+	proxyMtx sync.Mutex
+	txs      *clist.CList // concurrent linked-list of good txs
 
 	// notify listeners (ie. consensus) when txs are available
 	notifiedTxsAvailable bool
@@ -103,7 +47,7 @@ type TxVotePool struct {
 
 	logger log.Logger
 
-	metrics *Metrics
+	metrics *mempool.Metrics
 }
 
 // TxVotePoolOption sets an optional parameter on the Mempool.
@@ -120,7 +64,7 @@ func NewTxVotePool(
 		txs:     clist.New(),
 		height:  height,
 		logger:  log.NewNopLogger(),
-		metrics: NopMetrics(),
+		metrics: mempool.NopMetrics(),
 	}
 	if config.CacheSize > 0 {
 		txVotePool.cache = newMapTxCache(config.CacheSize)
@@ -146,7 +90,7 @@ func (txVotePool *TxVotePool) SetLogger(l log.Logger) {
 }
 
 // WithMetrics sets the metrics.
-func WithMetrics(metrics *Metrics) TxVotePoolOption {
+func WithMetrics(metrics *mempool.Metrics) TxVotePoolOption {
 	return func(txVotePool *TxVotePool) { txVotePool.metrics = metrics }
 }
 
@@ -160,7 +104,7 @@ func (txVotePool *TxVotePool) InitWAL() {
 	if err != nil {
 		panic(errors.Wrap(err, "Error ensuring Mempool WAL dir"))
 	}
-	af, err := auto.OpenAutoFile(walDir + "/txvwal")
+	af, err := auto.OpenAutoFile(walDir + "/txwal")
 	if err != nil {
 		panic(errors.Wrap(err, "Error opening Mempool WAL file"))
 	}
@@ -235,14 +179,15 @@ func (txVotePool *TxVotePool) TxsWaitChan() <-chan struct{} {
 //     It gets called from another goroutine.
 // CONTRACT: Either cb will get called, or err returned.
 func (txVotePool *TxVotePool) CheckTx(tx types.TxVote) (err error) {
-	return txVotePool.CheckTxWithInfo(tx, TxVoteInfo{PeerID: UnknownPeerID})
+	return txVotePool.CheckTxWithInfo(tx, mempool.TxInfo{SenderID: UnknownPeerID})
 }
 
 // CheckTxWithInfo performs the same operation as CheckTx, but with extra meta data about the tx.
 // Currently this metadata is the peer who sent it,
 // used to prevent the tx from being gossiped back to them.
-func (txVotePool *TxVotePool) CheckTxWithInfo(tx types.TxVote, txInfo TxVoteInfo) (err error) {
+func (txVotePool *TxVotePool) CheckTxWithInfo(tx types.TxVote, txInfo mempool.TxInfo) (err error) {
 	txVotePool.proxyMtx.Lock()
+	// use defer to unlock mutex because application (*local client*) might panic
 	defer txVotePool.proxyMtx.Unlock()
 
 	var (
@@ -261,7 +206,7 @@ func (txVotePool *TxVotePool) CheckTxWithInfo(tx types.TxVote, txInfo TxVoteInfo
 	// can't be larger than the maxMsgSize, otherwise we can't
 	// relay it to peers.
 	if tx.Size() > maxTxSize {
-		return ErrTxVoteTooLarge
+		return mempool.ErrTxTooLarge
 	}
 
 	// CACHE
@@ -272,14 +217,14 @@ func (txVotePool *TxVotePool) CheckTxWithInfo(tx types.TxVote, txInfo TxVoteInfo
 		// so we only record the sender for txs still in the mempool.
 		if e, ok := txVotePool.txsMap.Load(txVoteKey(tx)); ok {
 			memTxVote := e.(*clist.CElement).Value.(*mempoolTxVote)
-			if _, loaded := memTxVote.senders.LoadOrStore(txInfo.PeerID, true); loaded {
+			if _, loaded := memTxVote.senders.LoadOrStore(txInfo.SenderID, true); loaded {
 				// TODO: consider punishing peer for dups,
 				// its non-trivial since invalid txs can become valid,
 				// but they can spam the same tx with little cost to them atm.
 			}
 		}
 
-		return ErrTxVoteInCache
+		return mempool.ErrTxInCache
 	}
 	// END CACHE
 
@@ -302,7 +247,7 @@ func (txVotePool *TxVotePool) CheckTxWithInfo(tx types.TxVote, txInfo TxVoteInfo
 		tx:     tx,
 	}
 
-	memTxVote.senders.Store(txInfo.PeerID, true)
+	memTxVote.senders.Store(txInfo.SenderID, true)
 	txVotePool.addTx(memTxVote)
 	txVotePool.logger.Info("Added good vote",
 		"event", TxVoteID(tx),
@@ -525,3 +470,29 @@ var _ txCache = (*nopTxCache)(nil)
 func (nopTxCache) Reset()                 {}
 func (nopTxCache) Push(types.TxVote) bool { return true }
 func (nopTxCache) Remove(types.TxVote)    {}
+
+// TxVoteID is the hex encoded hash of the bytes as a types.Tx.
+func TxVoteID(tx types.TxVote) string {
+	return string(tx.Signature)
+}
+
+// txVoteKey is the fixed length array sha256 hash used as the key in maps.
+func txVoteKey(tx types.TxVote) [sha256.Size]byte {
+	return sha256.Sum256(tx.Signature)
+}
+
+// ErrMempoolIsFull means Tendermint & an application can't handle that much load
+type ErrMempoolIsFull struct {
+	numTxs int
+	maxTxs int
+
+	txsBytes    int64
+	maxTxsBytes int64
+}
+
+func (e ErrMempoolIsFull) Error() string {
+	return fmt.Sprintf(
+		"mempool is full: number of txs %d (max: %d), total txs bytes %d (max: %d)",
+		e.numTxs, e.maxTxs,
+		e.txsBytes, e.maxTxsBytes)
+}

@@ -20,6 +20,7 @@ import (
 	abci "github.com/tendermint/tendermint/abci/types"
 	cfg "github.com/tendermint/tendermint/config"
 	"github.com/tendermint/tendermint/libs/log"
+	"github.com/tendermint/tendermint/mempool"
 	"github.com/tendermint/tendermint/proxy"
 )
 
@@ -61,9 +62,9 @@ func ensureFire(t *testing.T, ch <-chan struct{}, timeoutMS int) {
 	}
 }
 
-func checkTxs(t *testing.T, mempool *TxVotePool, count int, peerID uint16) []types.TxVote {
+func checkTxs(t *testing.T, txvotepool *TxVotePool, count int, peerID uint16) []types.TxVote {
 	txs := make([]types.TxVote, count)
-	txInfo := TxVoteInfo{PeerID: peerID}
+	txInfo := mempool.TxInfo{SenderID: peerID}
 	for i := 0; i < count; i++ {
 		txBytes := make([]byte, 20)
 		_, err := rand.Read(txBytes)
@@ -71,11 +72,11 @@ func checkTxs(t *testing.T, mempool *TxVotePool, count int, peerID uint16) []typ
 		if err != nil {
 			t.Error(err)
 		}
-		if err := mempool.CheckTxWithInfo(txs[i], txInfo); err != nil {
+		if err := txvotepool.CheckTxWithInfo(txs[i], txInfo); err != nil {
 			// Skip invalid txs.
 			// TestMempoolFilters will fail otherwise. It asserts a number of txs
 			// returned.
-			if IsPreCheckError(err) {
+			if mempool.IsPreCheckError(err) {
 				continue
 			}
 			t.Fatalf("CheckTx failed: %v while checking #%d tx", err, i)
@@ -105,12 +106,12 @@ func TestReapMaxBytesMaxGas(t *testing.T) {
 func TestMempoolUpdateAddsTxsToCache(t *testing.T) {
 	app := kvstore.NewKVStoreApplication()
 	cc := proxy.NewLocalClientCreator(app)
-	mempool, cleanup := newMempoolWithApp(cc)
+	txvotepool, cleanup := newMempoolWithApp(cc)
 	defer cleanup()
-	mempool.Update([]types.TxVote{{}})
-	err := mempool.CheckTx(types.TxVote{})
+	txvotepool.Update([]types.TxVote{{}})
+	err := txvotepool.CheckTx(types.TxVote{})
 	if assert.Error(t, err) {
-		assert.Equal(t, ErrTxVoteInCache, err)
+		assert.Equal(t, mempool.ErrTxInCache, err)
 	}
 }
 
@@ -337,7 +338,7 @@ func TestMempoolMaxMsgSize(t *testing.T) {
 			require.NoError(t, err, caseString)
 		} else {
 			require.True(t, len(encoded) > maxMsgSize, caseString)
-			require.Equal(t, err, ErrTxVoteTooLarge, caseString)
+			require.Equal(t, err, mempool.ErrTxTooLarge, caseString)
 		}
 	}
 
@@ -348,46 +349,46 @@ func TestMempoolTxsBytes(t *testing.T) {
 	cc := proxy.NewLocalClientCreator(app)
 	config := cfg.ResetTestRoot("mempool_test")
 	config.Mempool.MaxTxsBytes = 10
-	mempool, cleanup := newMempoolWithAppAndConfig(cc, config)
+	txvotepool, cleanup := newMempoolWithAppAndConfig(cc, config)
 	defer cleanup()
 
 	// 1. zero by default
-	assert.EqualValues(t, 0, mempool.TxsBytes())
+	assert.EqualValues(t, 0, txvotepool.TxsBytes())
 
 	// 2. len(tx) after CheckTx
-	err := mempool.CheckTx(types.TxVote{int64(1), nil, time.Now(), nil, nil})
+	err := txvotepool.CheckTx(types.TxVote{int64(1), nil, time.Now(), nil, nil})
 	require.NoError(t, err)
-	assert.EqualValues(t, 1, mempool.TxsBytes())
+	assert.EqualValues(t, 1, txvotepool.TxsBytes())
 
 	// 3. zero again after tx is removed by Update
-	mempool.Update([]types.TxVote{{int64(1), nil, time.Now(), nil, nil}})
-	assert.EqualValues(t, 0, mempool.TxsBytes())
+	txvotepool.Update([]types.TxVote{{int64(1), nil, time.Now(), nil, nil}})
+	assert.EqualValues(t, 0, txvotepool.TxsBytes())
 
 	// 4. zero after Flush
-	err = mempool.CheckTx(types.TxVote{int64(2), nil, time.Now(), nil, nil})
+	err = txvotepool.CheckTx(types.TxVote{int64(2), nil, time.Now(), nil, nil})
 	require.NoError(t, err)
-	assert.EqualValues(t, 2, mempool.TxsBytes())
+	assert.EqualValues(t, 2, txvotepool.TxsBytes())
 
-	mempool.Flush()
-	assert.EqualValues(t, 0, mempool.TxsBytes())
+	txvotepool.Flush()
+	assert.EqualValues(t, 0, txvotepool.TxsBytes())
 
 	// 5. ErrMempoolIsFull is returned when/if MaxTxsBytes limit is reached.
-	err = mempool.CheckTx(types.TxVote{int64(4), nil, time.Now(), nil, nil})
+	err = txvotepool.CheckTx(types.TxVote{int64(4), nil, time.Now(), nil, nil})
 	require.NoError(t, err)
-	err = mempool.CheckTx(types.TxVote{int64(5), nil, time.Now(), nil, nil})
+	err = txvotepool.CheckTx(types.TxVote{int64(5), nil, time.Now(), nil, nil})
 	if assert.Error(t, err) {
-		assert.IsType(t, ErrMempoolIsFull{}, err)
+		assert.IsType(t, mempool.ErrMempoolIsFull{}, err)
 	}
 
 	// 6. zero after tx is rechecked and removed due to not being valid anymore
 	app2 := counter.NewCounterApplication(true)
 	cc = proxy.NewLocalClientCreator(app2)
-	mempool, cleanup = newMempoolWithApp(cc)
+	txvotepool, cleanup = newMempoolWithApp(cc)
 	defer cleanup()
 
-	err = mempool.CheckTx(types.TxVote{int64(0), nil, time.Now(), nil, nil})
+	err = txvotepool.CheckTx(types.TxVote{int64(0), nil, time.Now(), nil, nil})
 	require.NoError(t, err)
-	assert.EqualValues(t, 8, mempool.TxsBytes())
+	assert.EqualValues(t, 8, txvotepool.TxsBytes())
 
 	appConnCon, _ := cc.NewABCIClient()
 	appConnCon.SetLogger(log.TestingLogger().With("module", "abci-client", "connection", "consensus"))
@@ -395,8 +396,8 @@ func TestMempoolTxsBytes(t *testing.T) {
 	require.Nil(t, err)
 
 	// Pretend like we committed nothing so txBytes gets rechecked and removed.
-	mempool.Update([]types.TxVote{})
-	assert.EqualValues(t, 0, mempool.TxsBytes())
+	txvotepool.Update([]types.TxVote{})
+	assert.EqualValues(t, 0, txvotepool.TxsBytes())
 }
 
 func checksumIt(data []byte) string {
