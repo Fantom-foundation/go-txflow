@@ -62,7 +62,7 @@ func (voteSet *TxVoteSet) Size() int {
 // AddVote Returns added=true if vote is valid and new.
 func (voteSet *TxVoteSet) AddVote(vote *TxVote) (added bool, err error) {
 	if voteSet == nil {
-		cmn.PanicSanity("AddVote() on nil VoteSet")
+		panic("AddVote() on nil VoteSet")
 	}
 	voteSet.mtx.Lock()
 	defer voteSet.mtx.Unlock()
@@ -107,7 +107,7 @@ func (voteSet *TxVoteSet) addVote(vote *TxVote) (added bool, err error) {
 		return added, nil //NewConflictingVoteError(val, conflicting, vote)
 	}
 	if !added {
-		cmn.PanicSanity("Expected to add non-conflicting vote")
+		panic("Expected to add non-conflicting vote")
 	}
 	return added, nil
 }
@@ -126,7 +126,7 @@ func (voteSet *TxVoteSet) addVerifiedVote(vote *TxVote, votingPower int64) (adde
 	// Already exists in voteSet.votes?
 	if existing := voteSet.votes[vote.ValidatorAddress.String()]; existing != nil {
 		if bytes.Equal(existing.TxHash, vote.TxHash) {
-			cmn.PanicSanity("addVerifiedVote does not expect duplicate votes")
+			panic("addVerifiedVote does not expect duplicate votes")
 		} else {
 			conflicting = existing
 		}
