@@ -5,6 +5,7 @@ import (
 	"math"
 	"reflect"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	amino "github.com/tendermint/go-amino"
@@ -15,6 +16,7 @@ import (
 	"github.com/tendermint/tendermint/libs/log"
 	"github.com/tendermint/tendermint/mempool"
 	"github.com/tendermint/tendermint/p2p"
+	"github.com/tendermint/tendermint/state"
 	ttypes "github.com/tendermint/tendermint/types"
 )
 
@@ -39,78 +41,29 @@ const (
 type Reactor struct {
 	p2p.BaseReactor
 	config     *cfg.MempoolConfig
+	mempool    *mempool.CListMempool
 	txVotePool *TxVotePool
+	state      *state.State // State until height-1.
+	privVal    types.PrivValidator
+	chainID    string
 	ids        *txVotePoolIDs
 }
 
-type txVotePoolIDs struct {
-	mtx       sync.RWMutex
-	peerMap   map[p2p.ID]uint16
-	nextID    uint16              // assumes that a node will never have over 65536 active peers
-	activeIDs map[uint16]struct{} // used to check if a given peerID key is used, the value doesn't matter
-}
-
-// Reserve searches for the next unused ID and assignes it to the
-// peer.
-func (ids *txVotePoolIDs) ReserveForPeer(peer p2p.Peer) {
-	ids.mtx.Lock()
-	defer ids.mtx.Unlock()
-
-	curID := ids.nextPeerID()
-	ids.peerMap[peer.ID()] = curID
-	ids.activeIDs[curID] = struct{}{}
-}
-
-// nextPeerID returns the next unused peer ID to use.
-// This assumes that ids's mutex is already locked.
-func (ids *txVotePoolIDs) nextPeerID() uint16 {
-	if len(ids.activeIDs) == maxActiveIDs {
-		panic(fmt.Sprintf("node has maximum %d active IDs and wanted to get one more", maxActiveIDs))
-	}
-
-	_, idExists := ids.activeIDs[ids.nextID]
-	for idExists {
-		ids.nextID++
-		_, idExists = ids.activeIDs[ids.nextID]
-	}
-	curID := ids.nextID
-	ids.nextID++
-	return curID
-}
-
-// Reclaim returns the ID reserved for the peer back to unused pool.
-func (ids *txVotePoolIDs) Reclaim(peer p2p.Peer) {
-	ids.mtx.Lock()
-	defer ids.mtx.Unlock()
-
-	removedID, ok := ids.peerMap[peer.ID()]
-	if ok {
-		delete(ids.activeIDs, removedID)
-		delete(ids.peerMap, peer.ID())
-	}
-}
-
-// GetForPeer returns an ID reserved for the peer.
-func (ids *txVotePoolIDs) GetForPeer(peer p2p.Peer) uint16 {
-	ids.mtx.RLock()
-	defer ids.mtx.RUnlock()
-
-	return ids.peerMap[peer.ID()]
-}
-
-func newTxVotePoolIDs() *txVotePoolIDs {
-	return &txVotePoolIDs{
-		peerMap:   make(map[p2p.ID]uint16),
-		activeIDs: map[uint16]struct{}{0: {}},
-		nextID:    1, // reserve unknownPeerID(0) for mempoolReactor.BroadcastTx
-	}
-}
-
 // NewReactor returns a new TxpoolReactor with the given config and txpool.
-func NewReactor(config *cfg.MempoolConfig, txpool *TxVotePool) *Reactor {
+func NewReactor(config *cfg.MempoolConfig,
+	chainID string,
+	mempool *mempool.CListMempool,
+	txVotePool *TxVotePool,
+	state *state.State,
+	privVal types.PrivValidator,
+) *Reactor {
 	txR := &Reactor{
 		config:     config,
-		txVotePool: txpool,
+		mempool:    mempool,
+		txVotePool: txVotePool,
+		state:      state,
+		privVal:    privVal,
+		chainID:    chainID,
 		ids:        newTxVotePoolIDs(),
 	}
 	txR.BaseReactor = *p2p.NewBaseReactor("TxVotePoolReactor", txR)
@@ -121,6 +74,7 @@ func NewReactor(config *cfg.MempoolConfig, txpool *TxVotePool) *Reactor {
 func (txR *Reactor) SetLogger(l log.Logger) {
 	txR.Logger = l
 	txR.txVotePool.SetLogger(l)
+	txR.mempool.SetLogger(l)
 }
 
 // OnStart implements p2p.BaseReactor.
@@ -128,7 +82,51 @@ func (txR *Reactor) OnStart() error {
 	if !txR.config.Broadcast {
 		txR.Logger.Info("Tx broadcasting is disabled")
 	}
+	go txR.signTxRoutine()
 	return nil
+}
+
+// Sign new mempool txs.
+func (txR *Reactor) signTxRoutine() {
+	var next *clist.CElement
+	for {
+		// In case of both next.NextWaitChan() and peer.Quit() are variable at the same time
+		if !txR.IsRunning() {
+			return
+		}
+		// This happens because the CElement we were looking at got garbage
+		// collected (removed). That is, .NextWait() returned nil. Go ahead and
+		// start from the beginning.
+		if next == nil {
+			select {
+			case <-txR.mempool.TxsWaitChan(): // Wait until a tx is available
+				if next = txR.mempool.TxsFront(); next == nil {
+					continue
+				}
+			case <-txR.Quit():
+				return
+			}
+		}
+
+		memTx := next.Value.(*mempoolTx)
+
+		//Sign this transaction with private validator and save TxVote in TxVotePool
+		//Don't supress the error here, this needs work
+		txVote := types.NewTxVote(txR.state.LastBlockHeight, memTx.tx.Hash())
+		err := txR.privVal.SignTxVote(txR.chainID, txVote)
+		if err != nil {
+			//panic error here
+		}
+		txR.txVotePool.CheckTx(*txVote)
+
+		select {
+		case <-next.NextWaitChan():
+			// see the start of the for loop for nil check
+			next = next.Next()
+		case <-txR.Quit():
+			return
+		}
+	}
 }
 
 // GetChannels implements Reactor.
@@ -283,4 +281,83 @@ type TxVoteMessage struct {
 // String returns a string representation of the TxMessage.
 func (m *TxVoteMessage) String() string {
 	return fmt.Sprintf("[TxVoteMessage %v]", m.Tx)
+}
+
+type txVotePoolIDs struct {
+	mtx       sync.RWMutex
+	peerMap   map[p2p.ID]uint16
+	nextID    uint16              // assumes that a node will never have over 65536 active peers
+	activeIDs map[uint16]struct{} // used to check if a given peerID key is used, the value doesn't matter
+}
+
+// Reserve searches for the next unused ID and assignes it to the
+// peer.
+func (ids *txVotePoolIDs) ReserveForPeer(peer p2p.Peer) {
+	ids.mtx.Lock()
+	defer ids.mtx.Unlock()
+
+	curID := ids.nextPeerID()
+	ids.peerMap[peer.ID()] = curID
+	ids.activeIDs[curID] = struct{}{}
+}
+
+// nextPeerID returns the next unused peer ID to use.
+// This assumes that ids's mutex is already locked.
+func (ids *txVotePoolIDs) nextPeerID() uint16 {
+	if len(ids.activeIDs) == maxActiveIDs {
+		panic(fmt.Sprintf("node has maximum %d active IDs and wanted to get one more", maxActiveIDs))
+	}
+
+	_, idExists := ids.activeIDs[ids.nextID]
+	for idExists {
+		ids.nextID++
+		_, idExists = ids.activeIDs[ids.nextID]
+	}
+	curID := ids.nextID
+	ids.nextID++
+	return curID
+}
+
+// Reclaim returns the ID reserved for the peer back to unused pool.
+func (ids *txVotePoolIDs) Reclaim(peer p2p.Peer) {
+	ids.mtx.Lock()
+	defer ids.mtx.Unlock()
+
+	removedID, ok := ids.peerMap[peer.ID()]
+	if ok {
+		delete(ids.activeIDs, removedID)
+		delete(ids.peerMap, peer.ID())
+	}
+}
+
+// GetForPeer returns an ID reserved for the peer.
+func (ids *txVotePoolIDs) GetForPeer(peer p2p.Peer) uint16 {
+	ids.mtx.RLock()
+	defer ids.mtx.RUnlock()
+
+	return ids.peerMap[peer.ID()]
+}
+
+func newTxVotePoolIDs() *txVotePoolIDs {
+	return &txVotePoolIDs{
+		peerMap:   make(map[p2p.ID]uint16),
+		activeIDs: map[uint16]struct{}{0: {}},
+		nextID:    1, // reserve unknownPeerID(0) for mempoolReactor.BroadcastTx
+	}
+}
+
+// mempoolTx is a transaction that successfully ran
+type mempoolTx struct {
+	height    int64     // height that this tx had been validated in
+	gasWanted int64     // amount of gas this tx states it will require
+	tx        ttypes.Tx //
+
+	// ids of peers who've sent us this tx (as a map for quick lookups).
+	// senders: PeerID -> bool
+	senders sync.Map
+}
+
+// Height returns the height for this transaction
+func (memTx *mempoolTx) Height() int64 {
+	return atomic.LoadInt64(&memTx.height)
 }

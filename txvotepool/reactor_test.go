@@ -44,8 +44,8 @@ func mempoolLogger() log.Logger {
 }
 
 // connect N mempool reactors through N switches
-func makeAndConnectMempoolReactors(config *cfg.Config, N int) []*TxVotePoolReactor {
-	reactors := make([]*TxVotePoolReactor, N)
+func makeAndConnectMempoolReactors(config *cfg.Config, N int) []*Reactor {
+	reactors := make([]*Reactor, N)
 	logger := mempoolLogger()
 	for i := 0; i < N; i++ {
 		app := kvstore.NewKVStoreApplication()
@@ -53,7 +53,7 @@ func makeAndConnectMempoolReactors(config *cfg.Config, N int) []*TxVotePoolReact
 		mempool, cleanup := newMempoolWithApp(cc)
 		defer cleanup()
 
-		reactors[i] = NewTxVotePoolReactor(config.Mempool, mempool) // so we dont start the consensus states
+		reactors[i] = NewReactor(config.Mempool, mempool) // so we dont start the consensus states
 		reactors[i].SetLogger(logger.With("validator", i))
 	}
 
@@ -66,7 +66,7 @@ func makeAndConnectMempoolReactors(config *cfg.Config, N int) []*TxVotePoolReact
 }
 
 // wait for all txs on all reactors
-func waitForTxs(t *testing.T, txs []types.TxVote, reactors []*TxVotePoolReactor) {
+func waitForTxs(t *testing.T, txs []types.TxVote, reactors []*Reactor) {
 	// wait for the txs in all mempools
 	wg := new(sync.WaitGroup)
 	for i := 0; i < len(reactors); i++ {
@@ -89,7 +89,7 @@ func waitForTxs(t *testing.T, txs []types.TxVote, reactors []*TxVotePoolReactor)
 }
 
 // wait for all txs on a single mempool
-func _waitForTxs(t *testing.T, wg *sync.WaitGroup, txs []types.TxVote, reactorIdx int, reactors []*TxVotePoolReactor) {
+func _waitForTxs(t *testing.T, wg *sync.WaitGroup, txs []types.TxVote, reactorIdx int, reactors []*Reactor) {
 
 	mempool := reactors[reactorIdx].TxVotePool
 	for mempool.Size() != len(txs) {
@@ -104,7 +104,7 @@ func _waitForTxs(t *testing.T, wg *sync.WaitGroup, txs []types.TxVote, reactorId
 }
 
 // ensure no txs on reactor after some timeout
-func ensureNoTxs(t *testing.T, reactor *TxVotePoolReactor, timeout time.Duration) {
+func ensureNoTxs(t *testing.T, reactor *Reactor, timeout time.Duration) {
 	time.Sleep(timeout) // wait for the txs in all mempools
 	assert.Zero(t, reactor.TxVotePool.Size())
 }

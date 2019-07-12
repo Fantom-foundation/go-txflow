@@ -42,6 +42,19 @@ type TxVote struct {
 	Signature        []byte         `json:"signature"`
 }
 
+func NewTxVote(height int64,
+	txHash cmn.HexBytes,
+) *TxVote {
+	txVote := &TxVote{
+		Height:           height,
+		TxHash:           txHash,
+		Timestamp:        time.Now(),
+		ValidatorAddress: nil,
+		Signature:        nil,
+	}
+	return txVote
+}
+
 // CommitSig converts the Vote to a CommitSig.
 // If the Vote is nil, the CommitSig will be nil.
 func (vote *TxVote) CommitSig() *CommitSig {
