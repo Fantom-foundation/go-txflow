@@ -16,6 +16,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rs/cors"
 
+	"github.com/Fantom-foundation/go-txflow/privval"
+	"github.com/Fantom-foundation/go-txflow/types"
 	amino "github.com/tendermint/go-amino"
 	abci "github.com/tendermint/tendermint/abci/types"
 	"github.com/tendermint/tendermint/blockchain"
@@ -30,9 +32,10 @@ import (
 	"github.com/tendermint/tendermint/libs/log"
 	tmpubsub "github.com/tendermint/tendermint/libs/pubsub"
 	mempl "github.com/tendermint/tendermint/mempool"
+	"github.com/tendermint/tendermint/node"
 	"github.com/tendermint/tendermint/p2p"
 	"github.com/tendermint/tendermint/p2p/pex"
-	"github.com/tendermint/tendermint/privval"
+	tprivval "github.com/tendermint/tendermint/privval"
 	"github.com/tendermint/tendermint/proxy"
 	rpccore "github.com/tendermint/tendermint/rpc/core"
 	ctypes "github.com/tendermint/tendermint/rpc/core/types"
@@ -42,7 +45,7 @@ import (
 	"github.com/tendermint/tendermint/state/txindex"
 	"github.com/tendermint/tendermint/state/txindex/kv"
 	"github.com/tendermint/tendermint/state/txindex/null"
-	"github.com/tendermint/tendermint/types"
+	ttypes "github.com/tendermint/tendermint/types"
 	tmtime "github.com/tendermint/tendermint/types/time"
 	"github.com/tendermint/tendermint/version"
 )
@@ -50,37 +53,6 @@ import (
 // CustomReactorNamePrefix is a prefix for all custom reactors to prevent
 // clashes with built-in reactors.
 const CustomReactorNamePrefix = "CUSTOM_"
-
-//------------------------------------------------------------------------------
-
-// DBContext specifies config information for loading a new DB.
-type DBContext struct {
-	ID     string
-	Config *cfg.Config
-}
-
-// DBProvider takes a DBContext and returns an instantiated DB.
-type DBProvider func(*DBContext) (dbm.DB, error)
-
-// DefaultDBProvider returns a database using the DBBackend and DBDir
-// specified in the ctx.Config.
-func DefaultDBProvider(ctx *DBContext) (dbm.DB, error) {
-	dbType := dbm.DBBackendType(ctx.Config.DBBackend)
-	return dbm.NewDB(ctx.ID, dbType, ctx.Config.DBDir()), nil
-}
-
-// GenesisDocProvider returns a GenesisDoc.
-// It allows the GenesisDoc to be pulled from sources other than the
-// filesystem, for instance from a distributed key-value store cluster.
-type GenesisDocProvider func() (*types.GenesisDoc, error)
-
-// DefaultGenesisDocProviderFunc returns a GenesisDocProvider that loads
-// the GenesisDoc from the config.GenesisFile() on the filesystem.
-func DefaultGenesisDocProviderFunc(config *cfg.Config) GenesisDocProvider {
-	return func() (*types.GenesisDoc, error) {
-		return types.GenesisDocFromFile(config.GenesisFile())
-	}
-}
 
 // NodeProvider takes a config and a logger and returns a ready to go Node.
 type NodeProvider func(*cfg.Config, log.Logger) (*Node, error)
@@ -100,7 +72,7 @@ func DefaultNewNode(config *cfg.Config, logger log.Logger) (*Node, error) {
 	newPrivValKey := config.PrivValidatorKeyFile()
 	newPrivValState := config.PrivValidatorStateFile()
 	if _, err := os.Stat(oldPrivVal); !os.IsNotExist(err) {
-		oldPV, err := privval.LoadOldFilePV(oldPrivVal)
+		oldPV, err := tprivval.LoadOldFilePV(oldPrivVal)
 		if err != nil {
 			return nil, fmt.Errorf("error reading OldPrivValidator from %v: %v\n", oldPrivVal, err)
 		}
@@ -116,8 +88,8 @@ func DefaultNewNode(config *cfg.Config, logger log.Logger) (*Node, error) {
 		privval.LoadOrGenFilePV(newPrivValKey, newPrivValState),
 		nodeKey,
 		proxy.DefaultClientCreator(config.ProxyApp, config.ABCI, config.DBDir()),
-		DefaultGenesisDocProviderFunc(config),
-		DefaultDBProvider,
+		node.DefaultGenesisDocProviderFunc(config),
+		node.DefaultDBProvider,
 		DefaultMetricsProvider(config.Instrumentation),
 		logger,
 	)
@@ -161,7 +133,7 @@ type Node struct {
 
 	// config
 	config        *cfg.Config
-	genesisDoc    *types.GenesisDoc   // initial validator set
+	genesisDoc    *ttypes.GenesisDoc  // initial validator set
 	privValidator types.PrivValidator // local node's validator key
 
 	// network
@@ -173,7 +145,7 @@ type Node struct {
 	isListening bool
 
 	// services
-	eventBus         *types.EventBus // pub/sub for services
+	eventBus         *ttypes.EventBus // pub/sub for services
 	stateDB          dbm.DB
 	blockStore       *bc.BlockStore        // store the blockchain to disk
 	bcReactor        *bc.BlockchainReactor // for fast-syncing
@@ -190,15 +162,15 @@ type Node struct {
 	prometheusSrv    *http.Server
 }
 
-func initDBs(config *cfg.Config, dbProvider DBProvider) (blockStore *bc.BlockStore, stateDB dbm.DB, err error) {
+func initDBs(config *cfg.Config, dbProvider node.DBProvider) (blockStore *bc.BlockStore, stateDB dbm.DB, err error) {
 	var blockStoreDB dbm.DB
-	blockStoreDB, err = dbProvider(&DBContext{"blockstore", config})
+	blockStoreDB, err = dbProvider(&node.DBContext{"blockstore", config})
 	if err != nil {
 		return
 	}
 	blockStore = bc.NewBlockStore(blockStoreDB)
 
-	stateDB, err = dbProvider(&DBContext{"state", config})
+	stateDB, err = dbProvider(&node.DBContext{"state", config})
 	if err != nil {
 		return
 	}
@@ -215,8 +187,8 @@ func createAndStartProxyAppConns(clientCreator proxy.ClientCreator, logger log.L
 	return proxyApp, nil
 }
 
-func createAndStartEventBus(logger log.Logger) (*types.EventBus, error) {
-	eventBus := types.NewEventBus()
+func createAndStartEventBus(logger log.Logger) (*ttypes.EventBus, error) {
+	eventBus := ttypes.NewEventBus()
 	eventBus.SetLogger(logger.With("module", "events"))
 	if err := eventBus.Start(); err != nil {
 		return nil, err
@@ -224,13 +196,13 @@ func createAndStartEventBus(logger log.Logger) (*types.EventBus, error) {
 	return eventBus, nil
 }
 
-func createAndStartIndexerService(config *cfg.Config, dbProvider DBProvider,
-	eventBus *types.EventBus, logger log.Logger) (*txindex.IndexerService, txindex.TxIndexer, error) {
+func createAndStartIndexerService(config *cfg.Config, dbProvider node.DBProvider,
+	eventBus *ttypes.EventBus, logger log.Logger) (*txindex.IndexerService, txindex.TxIndexer, error) {
 
 	var txIndexer txindex.TxIndexer
 	switch config.TxIndex.Indexer {
 	case "kv":
-		store, err := dbProvider(&DBContext{"tx_index", config})
+		store, err := dbProvider(&node.DBContext{"tx_index", config})
 		if err != nil {
 			return nil, nil, err
 		}
@@ -254,7 +226,7 @@ func createAndStartIndexerService(config *cfg.Config, dbProvider DBProvider,
 }
 
 func doHandshake(stateDB dbm.DB, state sm.State, blockStore sm.BlockStore,
-	genDoc *types.GenesisDoc, eventBus *types.EventBus, proxyApp proxy.AppConns, consensusLogger log.Logger) error {
+	genDoc *ttypes.GenesisDoc, eventBus *ttypes.EventBus, proxyApp proxy.AppConns, consensusLogger log.Logger) error {
 
 	handshaker := cs.NewHandshaker(stateDB, state, blockStore, genDoc)
 	handshaker.SetLogger(consensusLogger)
@@ -322,10 +294,10 @@ func createMempoolAndMempoolReactor(config *cfg.Config, proxyApp proxy.AppConns,
 	return mempoolReactor, mempool
 }
 
-func createEvidenceReactor(config *cfg.Config, dbProvider DBProvider,
+func createEvidenceReactor(config *cfg.Config, dbProvider node.DBProvider,
 	stateDB dbm.DB, logger log.Logger) (*evidence.EvidenceReactor, *evidence.EvidencePool, error) {
 
-	evidenceDB, err := dbProvider(&DBContext{"evidence", config})
+	evidenceDB, err := dbProvider(&node.DBContext{"evidence", config})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -346,7 +318,7 @@ func createConsensusReactor(config *cfg.Config,
 	privValidator types.PrivValidator,
 	csMetrics *cs.Metrics,
 	fastSync bool,
-	eventBus *types.EventBus,
+	eventBus *ttypes.EventBus,
 	consensusLogger log.Logger) (*consensus.ConsensusReactor, *consensus.ConsensusState) {
 
 	consensusState := cs.NewConsensusState(
@@ -509,8 +481,8 @@ func NewNode(config *cfg.Config,
 	privValidator types.PrivValidator,
 	nodeKey *p2p.NodeKey,
 	clientCreator proxy.ClientCreator,
-	genesisDocProvider GenesisDocProvider,
-	dbProvider DBProvider,
+	genesisDocProvider node.GenesisDocProvider,
+	dbProvider node.DBProvider,
 	metricsProvider MetricsProvider,
 	logger log.Logger,
 	options ...Option) (*Node, error) {
@@ -962,7 +934,7 @@ func (n *Node) EvidencePool() *evidence.EvidencePool {
 }
 
 // EventBus returns the Node's EventBus.
-func (n *Node) EventBus() *types.EventBus {
+func (n *Node) EventBus() *ttypes.EventBus {
 	return n.eventBus
 }
 
@@ -973,7 +945,7 @@ func (n *Node) PrivValidator() types.PrivValidator {
 }
 
 // GenesisDoc returns the Node's GenesisDoc.
-func (n *Node) GenesisDoc() *types.GenesisDoc {
+func (n *Node) GenesisDoc() *ttypes.GenesisDoc {
 	return n.genesisDoc
 }
 
@@ -1008,7 +980,7 @@ func makeNodeInfo(
 	config *cfg.Config,
 	nodeKey *p2p.NodeKey,
 	txIndexer txindex.TxIndexer,
-	genDoc *types.GenesisDoc,
+	genDoc *ttypes.GenesisDoc,
 	state sm.State,
 ) (p2p.NodeInfo, error) {
 	txIndexerStatus := "on"
@@ -1063,7 +1035,7 @@ var (
 // database, or creates one using the given genesisDocProvider and persists the
 // result to the database. On success this also returns the genesis doc loaded
 // through the given provider.
-func LoadStateFromDBOrGenesisDocProvider(stateDB dbm.DB, genesisDocProvider GenesisDocProvider) (sm.State, *types.GenesisDoc, error) {
+func LoadStateFromDBOrGenesisDocProvider(stateDB dbm.DB, genesisDocProvider node.GenesisDocProvider) (sm.State, *ttypes.GenesisDoc, error) {
 	// Get genesis doc
 	genDoc, err := loadGenesisDoc(stateDB)
 	if err != nil {
@@ -1083,12 +1055,12 @@ func LoadStateFromDBOrGenesisDocProvider(stateDB dbm.DB, genesisDocProvider Gene
 }
 
 // panics if failed to unmarshal bytes
-func loadGenesisDoc(db dbm.DB) (*types.GenesisDoc, error) {
+func loadGenesisDoc(db dbm.DB) (*ttypes.GenesisDoc, error) {
 	b := db.Get(genesisDocKey)
 	if len(b) == 0 {
 		return nil, errors.New("Genesis doc not found")
 	}
-	var genDoc *types.GenesisDoc
+	var genDoc *ttypes.GenesisDoc
 	err := cdc.UnmarshalJSON(b, &genDoc)
 	if err != nil {
 		panic(fmt.Sprintf("Failed to load genesis doc due to unmarshaling error: %v (bytes: %X)", err, b))
@@ -1097,7 +1069,7 @@ func loadGenesisDoc(db dbm.DB) (*types.GenesisDoc, error) {
 }
 
 // panics if failed to marshal the given genesis document
-func saveGenesisDoc(db dbm.DB, genDoc *types.GenesisDoc) {
+func saveGenesisDoc(db dbm.DB, genDoc *ttypes.GenesisDoc) {
 	b, err := cdc.MarshalJSON(genDoc)
 	if err != nil {
 		panic(fmt.Sprintf("Failed to save genesis doc due to marshaling error: %v", err))
@@ -1118,11 +1090,11 @@ func createAndStartPrivValidatorSocketClient(
 	}
 	switch protocol {
 	case "unix":
-		listener = privval.NewUnixListener(ln)
+		listener = tprivval.NewUnixListener(ln)
 	case "tcp":
 		// TODO: persist this key so external signer
 		// can actually authenticate us
-		listener = privval.NewTCPListener(ln, ed25519.GenPrivKey())
+		listener = tprivval.NewTCPListener(ln, ed25519.GenPrivKey())
 	default:
 		return nil, fmt.Errorf(
 			"wrong listen address: expected either 'tcp' or 'unix' protocols, got %s",

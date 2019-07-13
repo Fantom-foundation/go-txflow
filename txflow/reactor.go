@@ -26,6 +26,7 @@ const (
 
 // TxFlowReactor defines a reactor for the consensus service.
 type TxFlowReactor struct {
+	// Do we need to be a p2p reactor? I think we can juse use state flow
 	p2p.BaseReactor // BaseService + p2p.Switch
 
 	// State keeps track of the current pending transactions and their vote state

@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/Fantom-foundation/go-txflow/privval"
 	"github.com/tendermint/tendermint/abci/example/kvstore"
 	cfg "github.com/tendermint/tendermint/config"
 	"github.com/tendermint/tendermint/crypto/ed25519"
@@ -21,8 +22,7 @@ import (
 	"github.com/tendermint/tendermint/libs/log"
 	mempl "github.com/tendermint/tendermint/mempool"
 	"github.com/tendermint/tendermint/p2p"
-	p2pmock "github.com/tendermint/tendermint/p2p/mock"
-	"github.com/tendermint/tendermint/privval"
+	tprivval "github.com/tendermint/tendermint/privval"
 	"github.com/tendermint/tendermint/proxy"
 	sm "github.com/tendermint/tendermint/state"
 	"github.com/tendermint/tendermint/types"
@@ -135,14 +135,14 @@ func TestNodeSetPrivValTCP(t *testing.T) {
 	defer os.RemoveAll(config.RootDir)
 	config.BaseConfig.PrivValidatorListenAddr = addr
 
-	dialer := privval.DialTCPFn(addr, 100*time.Millisecond, ed25519.GenPrivKey())
-	pvsc := privval.NewSignerServiceEndpoint(
+	dialer := tprivval.DialTCPFn(addr, 100*time.Millisecond, ed25519.GenPrivKey())
+	pvsc := tprivval.NewSignerServiceEndpoint(
 		log.TestingLogger(),
 		config.ChainID(),
 		types.NewMockPV(),
 		dialer,
 	)
-	privval.SignerServiceEndpointTimeoutReadWrite(100 * time.Millisecond)(pvsc)
+	tprivval.SignerServiceEndpointTimeoutReadWrite(100 * time.Millisecond)(pvsc)
 
 	go func() {
 		err := pvsc.Start()
@@ -177,14 +177,14 @@ func TestNodeSetPrivValIPC(t *testing.T) {
 	defer os.RemoveAll(config.RootDir)
 	config.BaseConfig.PrivValidatorListenAddr = "unix://" + tmpfile
 
-	dialer := privval.DialUnixFn(tmpfile)
-	pvsc := privval.NewSignerServiceEndpoint(
+	dialer := tprivval.DialUnixFn(tmpfile)
+	pvsc := tprivval.NewSignerServiceEndpoint(
 		log.TestingLogger(),
 		config.ChainID(),
 		types.NewMockPV(),
 		dialer,
 	)
-	privval.SignerServiceEndpointTimeoutReadWrite(100 * time.Millisecond)(pvsc)
+	tprivval.SignerServiceEndpointTimeoutReadWrite(100 * time.Millisecond)(pvsc)
 
 	go func() {
 		err := pvsc.Start()
@@ -281,34 +281,6 @@ func TestCreateProposalBlock(t *testing.T) {
 
 	err = blockExec.ValidateBlock(state, block)
 	assert.NoError(t, err)
-}
-
-func TestNodeNewNodeCustomReactors(t *testing.T) {
-	config := cfg.ResetTestRoot("node_new_node_custom_reactors_test")
-	defer os.RemoveAll(config.RootDir)
-
-	cr := p2pmock.NewReactor()
-
-	nodeKey, err := p2p.LoadOrGenNodeKey(config.NodeKeyFile())
-	require.NoError(t, err)
-
-	n, err := NewNode(config,
-		privval.LoadOrGenFilePV(config.PrivValidatorKeyFile(), config.PrivValidatorStateFile()),
-		nodeKey,
-		proxy.DefaultClientCreator(config.ProxyApp, config.ABCI, config.DBDir()),
-		DefaultGenesisDocProviderFunc(config),
-		DefaultDBProvider,
-		DefaultMetricsProvider(config.Instrumentation),
-		log.TestingLogger(),
-		CustomReactors(map[string]p2p.Reactor{"FOO": cr}),
-	)
-	require.NoError(t, err)
-
-	err = n.Start()
-	require.NoError(t, err)
-	defer n.Stop()
-
-	assert.True(t, cr.IsRunning())
 }
 
 func state(nVals int, height int64) (sm.State, dbm.DB) {

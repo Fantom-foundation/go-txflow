@@ -112,11 +112,16 @@ func (txR *Reactor) signTxRoutine() {
 
 		//Sign this transaction with private validator and save TxVote in TxVotePool
 		//Don't supress the error here, this needs work
+
+		//Only sign if I'm a validator
 		txVote := types.NewTxVote(txR.state.LastBlockHeight, memTx.tx.Hash())
 		err := txR.privVal.SignTxVote(txR.chainID, txVote)
 		if err != nil {
 			//panic error here
 		}
+		//This could fail, need another mechanism to run through missing transactions
+		//Should have a 1:1 parity
+		//Tx is signed at this point, and propagated outwards
 		txR.txVotePool.CheckTx(*txVote)
 
 		select {
