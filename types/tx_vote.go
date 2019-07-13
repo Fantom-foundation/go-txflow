@@ -44,8 +44,8 @@ type TxVote struct {
 
 func NewTxVote(height int64,
 	txHash cmn.HexBytes,
-) *TxVote {
-	txVote := &TxVote{
+) TxVote {
+	txVote := TxVote{
 		Height:           height,
 		TxHash:           txHash,
 		Timestamp:        time.Now(),

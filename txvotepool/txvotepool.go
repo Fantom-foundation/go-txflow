@@ -250,7 +250,7 @@ func (txVotePool *TxVotePool) CheckTxWithInfo(tx types.TxVote, txInfo mempool.Tx
 	memTxVote.senders.Store(txInfo.SenderID, true)
 	txVotePool.addTx(memTxVote)
 	txVotePool.logger.Info("Added good vote",
-		"event", TxVoteID(tx),
+		"signature", TxVoteID(tx),
 		"height", memTxVote.height,
 		"total", txVotePool.Size(),
 	)

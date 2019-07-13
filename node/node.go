@@ -16,6 +16,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rs/cors"
 
+	mempl "github.com/Fantom-foundation/go-txflow/mempool"
 	"github.com/Fantom-foundation/go-txflow/privval"
 	"github.com/Fantom-foundation/go-txflow/txvotepool"
 	"github.com/Fantom-foundation/go-txflow/types"
@@ -32,7 +33,7 @@ import (
 	dbm "github.com/tendermint/tendermint/libs/db"
 	"github.com/tendermint/tendermint/libs/log"
 	tmpubsub "github.com/tendermint/tendermint/libs/pubsub"
-	mempl "github.com/tendermint/tendermint/mempool"
+	tmempl "github.com/tendermint/tendermint/mempool"
 	"github.com/tendermint/tendermint/node"
 	"github.com/tendermint/tendermint/p2p"
 	"github.com/tendermint/tendermint/p2p/pex"
@@ -54,6 +55,9 @@ import (
 // CustomReactorNamePrefix is a prefix for all custom reactors to prevent
 // clashes with built-in reactors.
 const CustomReactorNamePrefix = "CUSTOM_"
+
+// Option sets a parameter for the node.
+type Option func(*Node)
 
 // NodeProvider takes a config and a logger and returns a ready to go Node.
 type NodeProvider func(*cfg.Config, log.Logger) (*Node, error)
@@ -91,38 +95,9 @@ func DefaultNewNode(config *cfg.Config, logger log.Logger) (*Node, error) {
 		proxy.DefaultClientCreator(config.ProxyApp, config.ABCI, config.DBDir()),
 		node.DefaultGenesisDocProviderFunc(config),
 		node.DefaultDBProvider,
-		DefaultMetricsProvider(config.Instrumentation),
+		node.DefaultMetricsProvider(config.Instrumentation),
 		logger,
 	)
-}
-
-// MetricsProvider returns a consensus, p2p and mempool Metrics.
-type MetricsProvider func(chainID string) (*cs.Metrics, *p2p.Metrics, *mempl.Metrics, *sm.Metrics)
-
-// DefaultMetricsProvider returns Metrics build using Prometheus client library
-// if Prometheus is enabled. Otherwise, it returns no-op Metrics.
-func DefaultMetricsProvider(config *cfg.InstrumentationConfig) MetricsProvider {
-	return func(chainID string) (*cs.Metrics, *p2p.Metrics, *mempl.Metrics, *sm.Metrics) {
-		if config.Prometheus {
-			return cs.PrometheusMetrics(config.Namespace, "chain_id", chainID),
-				p2p.PrometheusMetrics(config.Namespace, "chain_id", chainID),
-				mempl.PrometheusMetrics(config.Namespace, "chain_id", chainID),
-				sm.PrometheusMetrics(config.Namespace, "chain_id", chainID)
-		}
-		return cs.NopMetrics(), p2p.NopMetrics(), mempl.NopMetrics(), sm.NopMetrics()
-	}
-}
-
-// Option sets a parameter for the node.
-type Option func(*Node)
-
-// CustomReactors allows you to add custom reactors to the node's Switch.
-func CustomReactors(reactors map[string]p2p.Reactor) Option {
-	return func(n *Node) {
-		for name, reactor := range reactors {
-			n.sw.AddReactor(CustomReactorNamePrefix+name, reactor)
-		}
-	}
 }
 
 //------------------------------------------------------------------------------
@@ -146,21 +121,23 @@ type Node struct {
 	isListening bool
 
 	// services
-	eventBus         *ttypes.EventBus // pub/sub for services
-	stateDB          dbm.DB
-	blockStore       *bc.BlockStore        // store the blockchain to disk
-	bcReactor        *bc.BlockchainReactor // for fast-syncing
-	mempoolReactor   *mempl.Reactor        // for gossipping transactions
-	mempool          mempl.Mempool
-	consensusState   *cs.ConsensusState     // latest consensus state
-	consensusReactor *cs.ConsensusReactor   // for participating in the consensus
-	pexReactor       *pex.PEXReactor        // for exchanging peer addresses
-	evidencePool     *evidence.EvidencePool // tracking evidence
-	proxyApp         proxy.AppConns         // connection to the application
-	rpcListeners     []net.Listener         // rpc servers
-	txIndexer        txindex.TxIndexer
-	indexerService   *txindex.IndexerService
-	prometheusSrv    *http.Server
+	eventBus          *ttypes.EventBus // pub/sub for services
+	stateDB           dbm.DB
+	blockStore        *bc.BlockStore        // store the blockchain to disk
+	bcReactor         *bc.BlockchainReactor // for fast-syncing
+	mempoolReactor    *mempl.Reactor        // for gossipping transactions
+	mempool           tmempl.Mempool
+	txvotepoolReactor *txvotepool.Reactor
+	txvotepool        *txvotepool.TxVotePool
+	consensusState    *cs.ConsensusState     // latest consensus state
+	consensusReactor  *cs.ConsensusReactor   // for participating in the consensus
+	pexReactor        *pex.PEXReactor        // for exchanging peer addresses
+	evidencePool      *evidence.EvidencePool // tracking evidence
+	proxyApp          proxy.AppConns         // connection to the application
+	rpcListeners      []net.Listener         // rpc servers
+	txIndexer         txindex.TxIndexer
+	indexerService    *txindex.IndexerService
+	prometheusSrv     *http.Server
 }
 
 func initDBs(config *cfg.Config, dbProvider node.DBProvider) (blockStore *bc.BlockStore, stateDB dbm.DB, err error) {
@@ -275,7 +252,7 @@ func onlyValidatorIsUs(state sm.State, privVal types.PrivValidator) bool {
 }
 
 func createMempoolAndMempoolReactor(config *cfg.Config, proxyApp proxy.AppConns,
-	state sm.State, memplMetrics *mempl.Metrics, logger log.Logger) (*mempl.Reactor, *mempl.CListMempool) {
+	state sm.State, memplMetrics *tmempl.Metrics, logger log.Logger) (*mempl.Reactor, *mempl.CListMempool) {
 
 	mempool := mempl.NewCListMempool(
 		config.Mempool,
@@ -296,7 +273,7 @@ func createMempoolAndMempoolReactor(config *cfg.Config, proxyApp proxy.AppConns,
 }
 
 func createTxVotePoolAndTxVotePoolReactor(config *cfg.Config,
-	state *sm.State, privVal types.PrivValidator, mempool *mempl.CListMempool, memplMetrics *mempl.Metrics, logger log.Logger) (*txvotepool.Reactor, *txvotepool.TxVotePool) {
+	state *sm.State, privVal types.PrivValidator, mempool *mempl.CListMempool, memplMetrics *tmempl.Metrics, logger log.Logger) (*txvotepool.Reactor, *txvotepool.TxVotePool) {
 
 	txVPool := txvotepool.NewTxVotePool(
 		config.Mempool,
@@ -509,7 +486,7 @@ func NewNode(config *cfg.Config,
 	clientCreator proxy.ClientCreator,
 	genesisDocProvider node.GenesisDocProvider,
 	dbProvider node.DBProvider,
-	metricsProvider MetricsProvider,
+	metricsProvider node.MetricsProvider,
 	logger log.Logger,
 	options ...Option) (*Node, error) {
 
@@ -576,6 +553,9 @@ func NewNode(config *cfg.Config,
 
 	// Make MempoolReactor
 	mempoolReactor, mempool := createMempoolAndMempoolReactor(config, proxyApp, state, memplMetrics, logger)
+
+	// Make TxVotePoolReactor
+	txvotepoolReactor, txvotepool := createTxVotePoolAndTxVotePoolReactor(config, &state, privValidator, mempool, memplMetrics, logger)
 
 	// Make Evidence Reactor
 	evidenceReactor, evidencePool, err := createEvidenceReactor(config, dbProvider, stateDB, logger)
@@ -662,19 +642,21 @@ func NewNode(config *cfg.Config,
 		nodeInfo:  nodeInfo,
 		nodeKey:   nodeKey,
 
-		stateDB:          stateDB,
-		blockStore:       blockStore,
-		bcReactor:        bcReactor,
-		mempoolReactor:   mempoolReactor,
-		mempool:          mempool,
-		consensusState:   consensusState,
-		consensusReactor: consensusReactor,
-		pexReactor:       pexReactor,
-		evidencePool:     evidencePool,
-		proxyApp:         proxyApp,
-		txIndexer:        txIndexer,
-		indexerService:   indexerService,
-		eventBus:         eventBus,
+		stateDB:           stateDB,
+		blockStore:        blockStore,
+		bcReactor:         bcReactor,
+		mempoolReactor:    mempoolReactor,
+		mempool:           mempool,
+		txvotepoolReactor: txvotepoolReactor,
+		txvotepool:        txvotepool,
+		consensusState:    consensusState,
+		consensusReactor:  consensusReactor,
+		pexReactor:        pexReactor,
+		evidencePool:      evidencePool,
+		proxyApp:          proxyApp,
+		txIndexer:         txIndexer,
+		indexerService:    indexerService,
+		eventBus:          eventBus,
 	}
 	node.BaseService = *cmn.NewBaseService(logger, "Node", node)
 
@@ -725,6 +707,7 @@ func (n *Node) OnStart() error {
 
 	if n.config.Mempool.WalEnabled() {
 		n.mempool.InitWAL() // no need to have the mempool wal during tests
+		n.txvotepool.InitWAL()
 	}
 
 	// Start the switch (the P2P server).
@@ -758,6 +741,7 @@ func (n *Node) OnStop() {
 	// stop mempool WAL
 	if n.config.Mempool.WalEnabled() {
 		n.mempool.CloseWAL()
+		n.txvotepool.CloseWAL()
 	}
 
 	if err := n.transport.Close(); err != nil {
@@ -944,9 +928,19 @@ func (n *Node) MempoolReactor() *mempl.Reactor {
 	return n.mempoolReactor
 }
 
+// TxVotePoolReactor returns the Node's mempool reactor.
+func (n *Node) TxVotePoolReactor() *txvotepool.Reactor {
+	return n.txvotepoolReactor
+}
+
 // Mempool returns the Node's mempool.
-func (n *Node) Mempool() mempl.Mempool {
+func (n *Node) Mempool() tmempl.Mempool {
 	return n.mempool
+}
+
+// TxVotePool returns the Node's mempool.
+func (n *Node) TxVotePool() *txvotepool.TxVotePool {
+	return n.txvotepool
 }
 
 // PEXReactor returns the Node's PEXReactor. It returns nil if PEX is disabled.

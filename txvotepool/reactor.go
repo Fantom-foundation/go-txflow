@@ -10,11 +10,12 @@ import (
 
 	amino "github.com/tendermint/go-amino"
 
+	"github.com/Fantom-foundation/go-txflow/mempool"
 	"github.com/Fantom-foundation/go-txflow/types"
 	cfg "github.com/tendermint/tendermint/config"
 	"github.com/tendermint/tendermint/libs/clist"
 	"github.com/tendermint/tendermint/libs/log"
-	"github.com/tendermint/tendermint/mempool"
+	tmempool "github.com/tendermint/tendermint/mempool"
 	"github.com/tendermint/tendermint/p2p"
 	"github.com/tendermint/tendermint/state"
 	ttypes "github.com/tendermint/tendermint/types"
@@ -108,21 +109,21 @@ func (txR *Reactor) signTxRoutine() {
 			}
 		}
 
-		memTx := next.Value.(*mempoolTx)
+		memTx := next.Value.(*mempool.MempoolTx)
 
 		//Sign this transaction with private validator and save TxVote in TxVotePool
 		//Don't supress the error here, this needs work
 
 		//Only sign if I'm a validator
-		txVote := types.NewTxVote(txR.state.LastBlockHeight, memTx.tx.Hash())
-		err := txR.privVal.SignTxVote(txR.chainID, txVote)
+		txVote := types.NewTxVote(txR.state.LastBlockHeight, memTx.Tx.Hash())
+		err := txR.privVal.SignTxVote(txR.chainID, &txVote)
 		if err != nil {
 			//panic error here
 		}
 		//This could fail, need another mechanism to run through missing transactions
 		//Should have a 1:1 parity
 		//Tx is signed at this point, and propagated outwards
-		txR.txVotePool.CheckTx(*txVote)
+		txR.txVotePool.CheckTx(txVote)
 
 		select {
 		case <-next.NextWaitChan():
@@ -158,6 +159,10 @@ func (txR *Reactor) RemovePeer(peer p2p.Peer, reason interface{}) {
 	// broadcast routine checks if peer is gone and returns
 }
 
+func (txR *Reactor) Size() int {
+	return txR.txVotePool.Size()
+}
+
 // Receive implements Reactor.
 // It adds any received transactions to the txpool.
 func (txR *Reactor) Receive(chID byte, src p2p.Peer, msgBytes []byte) {
@@ -172,7 +177,7 @@ func (txR *Reactor) Receive(chID byte, src p2p.Peer, msgBytes []byte) {
 	switch msg := msg.(type) {
 	case *TxVoteMessage:
 		peerID := txR.ids.GetForPeer(src)
-		err := txR.txVotePool.CheckTxWithInfo(msg.Tx, mempool.TxInfo{SenderID: peerID})
+		err := txR.txVotePool.CheckTxWithInfo(msg.Tx, tmempool.TxInfo{SenderID: peerID})
 		if err != nil {
 			txR.Logger.Info("Could not check tx", "tx", TxVoteID(msg.Tx), "err", err)
 		}

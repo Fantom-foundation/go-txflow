@@ -12,7 +12,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	mempl "github.com/Fantom-foundation/go-txflow/mempool"
 	"github.com/Fantom-foundation/go-txflow/privval"
+	"github.com/Fantom-foundation/go-txflow/txvotepool"
+	"github.com/Fantom-foundation/go-txflow/types"
 	"github.com/tendermint/tendermint/abci/example/kvstore"
 	cfg "github.com/tendermint/tendermint/config"
 	"github.com/tendermint/tendermint/crypto/ed25519"
@@ -20,12 +23,12 @@ import (
 	cmn "github.com/tendermint/tendermint/libs/common"
 	dbm "github.com/tendermint/tendermint/libs/db"
 	"github.com/tendermint/tendermint/libs/log"
-	mempl "github.com/tendermint/tendermint/mempool"
+	tmempl "github.com/tendermint/tendermint/mempool"
 	"github.com/tendermint/tendermint/p2p"
 	tprivval "github.com/tendermint/tendermint/privval"
 	"github.com/tendermint/tendermint/proxy"
 	sm "github.com/tendermint/tendermint/state"
-	"github.com/tendermint/tendermint/types"
+	ttypes "github.com/tendermint/tendermint/types"
 	tmtime "github.com/tendermint/tendermint/types/time"
 	"github.com/tendermint/tendermint/version"
 )
@@ -43,7 +46,7 @@ func TestNodeStartStop(t *testing.T) {
 	t.Logf("Started node %v", n.sw.NodeInfo())
 
 	// wait for the node to produce a block
-	blocksSub, err := n.EventBus().Subscribe(context.Background(), "node_test", types.EventQueryNewBlock)
+	blocksSub, err := n.EventBus().Subscribe(context.Background(), "node_test", ttypes.EventQueryNewBlock)
 	require.NoError(t, err)
 	select {
 	case <-blocksSub.Out():
@@ -169,7 +172,7 @@ func TestPrivValidatorListenAddrNoProtocol(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestNodeSetPrivValIPC(t *testing.T) {
+/*func TestNodeSetPrivValIPC(t *testing.T) {
 	tmpfile := "/tmp/kms." + cmn.RandStr(6) + ".sock"
 	defer os.Remove(tmpfile) // clean up
 
@@ -196,7 +199,7 @@ func TestNodeSetPrivValIPC(t *testing.T) {
 	require.NoError(t, err)
 	assert.IsType(t, &privval.SignerValidatorEndpoint{}, n.PrivValidator())
 
-}
+}*/
 
 // testFreeAddr claims a free port so we don't block on listener being ready.
 func testFreeAddr(t *testing.T) string {
@@ -227,7 +230,7 @@ func TestCreateProposalBlock(t *testing.T) {
 	proposerAddr, _ := state.Validators.GetByIndex(0)
 
 	// Make Mempool
-	memplMetrics := mempl.PrometheusMetrics("node_test")
+	memplMetrics := tmempl.PrometheusMetrics("node_test")
 	mempool := mempl.NewCListMempool(
 		config.Mempool,
 		proxyApp.Mempool(),
@@ -238,8 +241,25 @@ func TestCreateProposalBlock(t *testing.T) {
 	)
 	mempool.SetLogger(logger)
 
+	// Make TxVotePool
+	txVPool := txvotepool.NewTxVotePool(
+		config.Mempool,
+		state.LastBlockHeight,
+		txvotepool.WithMetrics(memplMetrics),
+	)
+	txVotePoolLogger := logger.With("module", "txvotepool")
+	txVotePoolReactor := txvotepool.NewReactor(
+		config.Mempool,
+		state.ChainID,
+		mempool,
+		txVPool,
+		&state,
+		types.NewMockPV(),
+	)
+	txVotePoolReactor.SetLogger(txVotePoolLogger)
+
 	// Make EvidencePool
-	types.RegisterMockEvidencesGlobal() // XXX!
+	ttypes.RegisterMockEvidencesGlobal() // XXX!
 	evidence.RegisterMockEvidences()
 	evidenceDB := dbm.NewMemDB()
 	evidencePool := evidence.NewEvidencePool(stateDB, evidenceDB)
@@ -248,9 +268,9 @@ func TestCreateProposalBlock(t *testing.T) {
 	// fill the evidence pool with more evidence
 	// than can fit in a block
 	minEvSize := 12
-	numEv := (maxBytes / types.MaxEvidenceBytesDenominator) / minEvSize
+	numEv := (maxBytes / ttypes.MaxEvidenceBytesDenominator) / minEvSize
 	for i := 0; i < numEv; i++ {
-		ev := types.NewMockRandomGoodEvidence(1, proposerAddr, cmn.RandBytes(minEvSize))
+		ev := ttypes.NewMockRandomGoodEvidence(1, proposerAddr, cmn.RandBytes(minEvSize))
 		err := evidencePool.AddEvidence(ev)
 		assert.NoError(t, err)
 	}
@@ -272,7 +292,7 @@ func TestCreateProposalBlock(t *testing.T) {
 		evidencePool,
 	)
 
-	commit := types.NewCommit(types.BlockID{}, nil)
+	commit := ttypes.NewCommit(ttypes.BlockID{}, nil)
 	block, _ := blockExec.CreateProposalBlock(
 		height,
 		state, commit,
@@ -283,19 +303,82 @@ func TestCreateProposalBlock(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+// create a proposal block using real and full
+// mempool and evidence pool and validate it.
+func TestTxVotes(t *testing.T) {
+	config := cfg.ResetTestRoot("node_create_proposal")
+	defer os.RemoveAll(config.RootDir)
+	cc := proxy.NewLocalClientCreator(kvstore.NewKVStoreApplication())
+	proxyApp := proxy.NewAppConns(cc)
+	err := proxyApp.Start()
+	require.Nil(t, err)
+	defer proxyApp.Stop()
+
+	logger := log.NewTMLogger(log.NewSyncWriter(os.Stdout))
+
+	var height int64 = 1
+	state, _ := state(1, height)
+	maxBytes := 16384
+	state.ConsensusParams.Block.MaxBytes = int64(maxBytes)
+
+	// Make Mempool
+	memplMetrics := tmempl.PrometheusMetrics("node_test_1")
+	mempool := mempl.NewCListMempool(
+		config.Mempool,
+		proxyApp.Mempool(),
+		state.LastBlockHeight,
+		mempl.WithMetrics(memplMetrics),
+		mempl.WithPreCheck(sm.TxPreCheck(state)),
+		mempl.WithPostCheck(sm.TxPostCheck(state)),
+	)
+	mempool.SetLogger(logger)
+
+	// Make TxVotePool
+	txvMetrics := tmempl.PrometheusMetrics("node_test_2")
+	txVotePool := txvotepool.NewTxVotePool(
+		config.Mempool,
+		state.LastBlockHeight,
+		txvotepool.WithMetrics(txvMetrics),
+	)
+	txVotePoolLogger := logger.With("module", "txvotepool")
+	txVotePoolReactor := txvotepool.NewReactor(
+		config.Mempool,
+		state.ChainID,
+		mempool,
+		txVotePool,
+		&state,
+		types.NewMockPV(),
+	)
+	txVotePoolReactor.SetLogger(txVotePoolLogger)
+
+	err = txVotePoolReactor.Start()
+	assert.NoError(t, err)
+	// fill the mempool with more txs
+	// than can fit in a block
+	txLength := 1000
+	for i := 0; i < maxBytes/txLength; i++ {
+		tx := cmn.RandBytes(txLength)
+		err := mempool.CheckTx(tx, nil)
+		assert.NoError(t, err)
+	}
+
+	assert.Equal(t, true, txVotePoolReactor.IsRunning())
+	assert.Equal(t, 16, mempool.Size())
+}
+
 func state(nVals int, height int64) (sm.State, dbm.DB) {
-	vals := make([]types.GenesisValidator, nVals)
+	vals := make([]ttypes.GenesisValidator, nVals)
 	for i := 0; i < nVals; i++ {
 		secret := []byte(fmt.Sprintf("test%d", i))
 		pk := ed25519.GenPrivKeyFromSecret(secret)
-		vals[i] = types.GenesisValidator{
+		vals[i] = ttypes.GenesisValidator{
 			Address: pk.PubKey().Address(),
 			PubKey:  pk.PubKey(),
 			Power:   1000,
 			Name:    fmt.Sprintf("test%d", i),
 		}
 	}
-	s, _ := sm.MakeGenesisState(&types.GenesisDoc{
+	s, _ := sm.MakeGenesisState(&ttypes.GenesisDoc{
 		ChainID:    "test-chain",
 		Validators: vals,
 		AppHash:    nil,
