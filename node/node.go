@@ -17,6 +17,7 @@ import (
 	"github.com/rs/cors"
 
 	"github.com/Fantom-foundation/go-txflow/privval"
+	"github.com/Fantom-foundation/go-txflow/txvotepool"
 	"github.com/Fantom-foundation/go-txflow/types"
 	amino "github.com/tendermint/go-amino"
 	abci "github.com/tendermint/tendermint/abci/types"
@@ -292,6 +293,31 @@ func createMempoolAndMempoolReactor(config *cfg.Config, proxyApp proxy.AppConns,
 		mempool.EnableTxsAvailable()
 	}
 	return mempoolReactor, mempool
+}
+
+func createTxVotePoolAndTxVotePoolReactor(config *cfg.Config,
+	state *sm.State, privVal types.PrivValidator, mempool *mempl.CListMempool, memplMetrics *mempl.Metrics, logger log.Logger) (*txvotepool.Reactor, *txvotepool.TxVotePool) {
+
+	txVPool := txvotepool.NewTxVotePool(
+		config.Mempool,
+		state.LastBlockHeight,
+		txvotepool.WithMetrics(memplMetrics),
+	)
+	txVotePoolLogger := logger.With("module", "txvotepool")
+	txVotePoolReactor := txvotepool.NewReactor(
+		config.Mempool,
+		state.ChainID,
+		mempool,
+		txVPool,
+		state,
+		privVal,
+	)
+	txVotePoolReactor.SetLogger(txVotePoolLogger)
+
+	if config.Consensus.WaitForTxs() {
+		txVPool.EnableTxsAvailable()
+	}
+	return txVotePoolReactor, txVPool
 }
 
 func createEvidenceReactor(config *cfg.Config, dbProvider node.DBProvider,
