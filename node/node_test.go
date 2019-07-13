@@ -317,7 +317,7 @@ func TestTxVotes(t *testing.T) {
 	logger := log.NewTMLogger(log.NewSyncWriter(os.Stdout))
 
 	var height int64 = 1
-	state, _ := state(1, height)
+	state, _, privVal := stateWithPrivValidator(1, height)
 	maxBytes := 16384
 	state.ConsensusParams.Block.MaxBytes = int64(maxBytes)
 
@@ -347,7 +347,7 @@ func TestTxVotes(t *testing.T) {
 		mempool,
 		txVotePool,
 		&state,
-		types.NewMockPV(),
+		privVal,
 	)
 	txVotePoolReactor.SetLogger(txVotePoolLogger)
 
@@ -364,6 +364,17 @@ func TestTxVotes(t *testing.T) {
 
 	assert.Equal(t, true, txVotePoolReactor.IsRunning())
 	assert.Equal(t, 16, mempool.Size())
+
+	txflowLogger := logger.With("module", "txflow")
+	txflow := txvotepool.NewTxFlowVoteReactor(
+		txVotePool,
+		state.LastBlockHeight,
+		state.ChainID,
+		state.Validators,
+	)
+	txflow.SetLogger(txflowLogger)
+	err = txflow.Start()
+	assert.NoError(t, err)
 }
 
 func state(nVals int, height int64) (sm.State, dbm.DB) {
@@ -394,4 +405,34 @@ func state(nVals int, height int64) (sm.State, dbm.DB) {
 		sm.SaveState(stateDB, s)
 	}
 	return s, stateDB
+}
+
+func stateWithPrivValidator(nVals int, height int64) (sm.State, dbm.DB, types.PrivValidator) {
+	vals := make([]ttypes.GenesisValidator, nVals)
+	pk := types.NewMockPV()
+	for i := 0; i < nVals; i++ {
+		pk = types.NewMockPV()
+		vals[i] = ttypes.GenesisValidator{
+			Address: pk.GetPubKey().Address(),
+			PubKey:  pk.GetPubKey(),
+			Power:   1000,
+			Name:    fmt.Sprintf("test%d", i),
+		}
+	}
+	s, _ := sm.MakeGenesisState(&ttypes.GenesisDoc{
+		ChainID:    "test-chain",
+		Validators: vals,
+		AppHash:    nil,
+	})
+
+	// save validators to db for 2 heights
+	stateDB := dbm.NewMemDB()
+	sm.SaveState(stateDB, s)
+
+	for i := 1; i < int(height); i++ {
+		s.LastBlockHeight++
+		s.LastValidators = s.Validators.Copy()
+		sm.SaveState(stateDB, s)
+	}
+	return s, stateDB, pk
 }

@@ -29,7 +29,12 @@ type TxVoteSet struct {
 }
 
 // NewTxVoteSet Constructs a new VoteSet struct used to accumulate votes for given height/round.
-func NewTxVoteSet(chainID string, height int64, txHash cmn.HexBytes, valSet *types.ValidatorSet) *TxVoteSet {
+func NewTxVoteSet(
+	chainID string,
+	height int64,
+	txHash cmn.HexBytes,
+	valSet *types.ValidatorSet,
+) *TxVoteSet {
 	return &TxVoteSet{
 		chainID: chainID,
 		height:  height,
@@ -182,6 +187,24 @@ func (voteSet *TxVoteSet) HasTwoThirdsAny() bool {
 	voteSet.mtx.Lock()
 	defer voteSet.mtx.Unlock()
 	return voteSet.sum > voteSet.valSet.TotalVotingPower()*2/3
+}
+
+func (voteSet *TxVoteSet) Stake() int64 {
+	if voteSet == nil {
+		return -1
+	}
+	voteSet.mtx.Lock()
+	defer voteSet.mtx.Unlock()
+	return voteSet.sum
+}
+
+func (voteSet *TxVoteSet) TotalStake() int64 {
+	if voteSet == nil {
+		return -1
+	}
+	voteSet.mtx.Lock()
+	defer voteSet.mtx.Unlock()
+	return voteSet.valSet.TotalVotingPower() * 2 / 3
 }
 
 func (voteSet *TxVoteSet) HasAll() bool {

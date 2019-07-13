@@ -1,22 +1,40 @@
-package txflow
+package txvotepool
 
 import (
-	"github.com/Fantom-foundation/go-txflow/txvotepool"
+	"time"
+
+	"github.com/Fantom-foundation/go-txflow/types"
 	"github.com/tendermint/tendermint/libs/clist"
 	"github.com/tendermint/tendermint/libs/log"
 	"github.com/tendermint/tendermint/p2p"
+	ttypes "github.com/tendermint/tendermint/types"
 )
 
 // TxFlowVoteReactor handles consensus commits
 type TxFlowVoteReactor struct {
 	p2p.BaseReactor
-	TxVotePool *txvotepool.TxVotePool
+	TxVotePool *TxVotePool
+
+	ChainID    string
+	Height     int64
+	StartTime  time.Time
+	Validators *ttypes.ValidatorSet
+	TxVoteSets map[string]*types.TxVoteSet
 }
 
 // NewTxFlowVoteReactor returns a new MempoolReactor with the given config and mempool.
-func NewTxFlowVoteReactor(txvotepool *txvotepool.TxVotePool) *TxFlowVoteReactor {
+func NewTxFlowVoteReactor(
+	txvotepool *TxVotePool,
+	height int64,
+	chainID string,
+	validators *ttypes.ValidatorSet,
+) *TxFlowVoteReactor {
 	txFVR := &TxFlowVoteReactor{
 		TxVotePool: txvotepool,
+		Height:     height,
+		ChainID:    chainID,
+		Validators: validators,
+		TxVoteSets: make(map[string]*types.TxVoteSet),
 	}
 	txFVR.BaseReactor = *p2p.NewBaseReactor("TxFlowVoteReactor", txFVR)
 	return txFVR
@@ -39,7 +57,7 @@ func (txFVR *TxFlowVoteReactor) OnStart() error {
 func (txFVR *TxFlowVoteReactor) GetChannels() []*p2p.ChannelDescriptor {
 	return []*p2p.ChannelDescriptor{
 		{
-			ID:       TxpoolChannel,
+			ID:       TxVotePoolChannel,
 			Priority: 5,
 		},
 	}
@@ -68,6 +86,32 @@ func (txFVR *TxFlowVoteReactor) checkMaj23Routine() {
 		}
 
 		memTx := next.Value.(*mempoolTxVote)
+		//Check if we have already seen this txHash
+		txHash := string(memTx.tx.TxHash)
+		if _, ok := txFVR.TxVoteSets[txHash]; !ok {
+			voteSet := types.NewTxVoteSet(
+				txFVR.ChainID,
+				txFVR.Height,
+				memTx.tx.TxHash,
+				txFVR.Validators,
+			)
+			txFVR.TxVoteSets[txHash] = voteSet
+		}
+
+		txFVR.TxVoteSets[txHash].AddVote(&memTx.tx)
+
+		_, val := txFVR.Validators.GetByAddress(memTx.tx.ValidatorAddress)
+
+		txFVR.Logger.Info("Validator", "Address", memTx.tx.String())
+
+		txFVR.Logger.Info("HasTwoThirdsMajority",
+			"Stake", txFVR.TxVoteSets[txHash].Stake(),
+			"TotalStake", txFVR.TxVoteSets[txHash].TotalStake(),
+			"ValidatorStake", val.VotingPower)
+		if txFVR.TxVoteSets[txHash].HasTwoThirdsMajority() {
+			txFVR.Logger.Info("HasTwoThirdsMajority")
+		}
+
 		//memTx.tx.TxHash
 		//Get TxHash
 		//Add Vote for TxHash

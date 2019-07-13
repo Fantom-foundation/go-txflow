@@ -115,7 +115,7 @@ func (txR *Reactor) signTxRoutine() {
 		//Don't supress the error here, this needs work
 
 		//Only sign if I'm a validator
-		txVote := types.NewTxVote(txR.state.LastBlockHeight, memTx.Tx.Hash())
+		txVote := types.NewTxVote(txR.state.LastBlockHeight, memTx.Tx.Hash(), txR.privVal.GetPubKey().Address())
 		err := txR.privVal.SignTxVote(txR.chainID, &txVote)
 		if err != nil {
 			//panic error here

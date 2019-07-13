@@ -44,12 +44,13 @@ type TxVote struct {
 
 func NewTxVote(height int64,
 	txHash cmn.HexBytes,
+	validatorAddress crypto.Address,
 ) TxVote {
 	txVote := TxVote{
 		Height:           height,
 		TxHash:           txHash,
 		Timestamp:        time.Now(),
-		ValidatorAddress: nil,
+		ValidatorAddress: validatorAddress,
 		Signature:        nil,
 	}
 	return txVote
