@@ -20,7 +20,6 @@ import (
 	abci "github.com/tendermint/tendermint/abci/types"
 	bc "github.com/tendermint/tendermint/blockchain"
 	cfg "github.com/tendermint/tendermint/config"
-	cstypes "github.com/tendermint/tendermint/consensus/types"
 	cmn "github.com/tendermint/tendermint/libs/common"
 	dbm "github.com/tendermint/tendermint/libs/db"
 	"github.com/tendermint/tendermint/libs/log"
@@ -122,13 +121,13 @@ func incrementRound(vss ...*validatorStub) {
 //-------------------------------------------------------------------------------
 // Functions for transitioning the consensus state
 
-func startTestRound(cs *ConsensusState, height int64, round int) {
+func startTestRound(cs *TxFlowState, height int64, round int) {
 	cs.enterNewRound(height, round)
 	cs.startRoutines(0)
 }
 
 // Create proposal block from cs1 but sign it with vs.
-func decideProposal(cs1 *ConsensusState, vs *validatorStub, height int64, round int) (proposal *types.Proposal, block *types.Block) {
+func decideProposal(cs1 *TxFlowState, vs *validatorStub, height int64, round int) (proposal *types.Proposal, block *types.Block) {
 	cs1.mtx.Lock()
 	block, blockParts := cs1.createProposalBlock()
 	validRound := cs1.ValidRound
@@ -147,18 +146,18 @@ func decideProposal(cs1 *ConsensusState, vs *validatorStub, height int64, round 
 	return
 }
 
-func addVotes(to *ConsensusState, votes ...*types.Vote) {
+func addVotes(to *TxFlowState, votes ...*types.Vote) {
 	for _, vote := range votes {
 		to.peerMsgQueue <- msgInfo{Msg: &VoteMessage{vote}}
 	}
 }
 
-func signAddVotes(to *ConsensusState, voteType types.SignedMsgType, hash []byte, header types.PartSetHeader, vss ...*validatorStub) {
+func signAddVotes(to *TxFlowState, voteType types.SignedMsgType, hash []byte, header types.PartSetHeader, vss ...*validatorStub) {
 	votes := signVotes(voteType, hash, header, vss...)
 	addVotes(to, votes...)
 }
 
-func validatePrevote(t *testing.T, cs *ConsensusState, round int, privVal *validatorStub, blockHash []byte) {
+func validatePrevote(t *testing.T, cs *TxFlowState, round int, privVal *validatorStub, blockHash []byte) {
 	prevotes := cs.Votes.Prevotes(round)
 	address := privVal.GetPubKey().Address()
 	var vote *types.Vote
@@ -176,7 +175,7 @@ func validatePrevote(t *testing.T, cs *ConsensusState, round int, privVal *valid
 	}
 }
 
-func validateLastPrecommit(t *testing.T, cs *ConsensusState, privVal *validatorStub, blockHash []byte) {
+func validateLastPrecommit(t *testing.T, cs *TxFlowState, privVal *validatorStub, blockHash []byte) {
 	votes := cs.LastCommit
 	address := privVal.GetPubKey().Address()
 	var vote *types.Vote
@@ -188,7 +187,7 @@ func validateLastPrecommit(t *testing.T, cs *ConsensusState, privVal *validatorS
 	}
 }
 
-func validatePrecommit(t *testing.T, cs *ConsensusState, thisRound, lockRound int, privVal *validatorStub, votedBlockHash, lockedBlockHash []byte) {
+func validatePrecommit(t *testing.T, cs *TxFlowState, thisRound, lockRound int, privVal *validatorStub, votedBlockHash, lockedBlockHash []byte) {
 	precommits := cs.Votes.Precommits(thisRound)
 	address := privVal.GetPubKey().Address()
 	var vote *types.Vote
@@ -218,7 +217,7 @@ func validatePrecommit(t *testing.T, cs *ConsensusState, thisRound, lockRound in
 
 }
 
-func validatePrevoteAndPrecommit(t *testing.T, cs *ConsensusState, thisRound, lockRound int, privVal *validatorStub, votedBlockHash, lockedBlockHash []byte) {
+func validatePrevoteAndPrecommit(t *testing.T, cs *TxFlowState, thisRound, lockRound int, privVal *validatorStub, votedBlockHash, lockedBlockHash []byte) {
 	// verify the prevote
 	validatePrevote(t, cs, thisRound, privVal, votedBlockHash)
 	// verify precommit
@@ -227,7 +226,7 @@ func validatePrevoteAndPrecommit(t *testing.T, cs *ConsensusState, thisRound, lo
 	cs.mtx.Unlock()
 }
 
-func subscribeToVoter(cs *ConsensusState, addr []byte) <-chan tmpubsub.Message {
+func subscribeToVoter(cs *TxFlowState, addr []byte) <-chan tmpubsub.Message {
 	votesSub, err := cs.eventBus.Subscribe(context.Background(), testSubscriber, types.EventQueryVote)
 	if err != nil {
 		panic(fmt.Sprintf("failed to subscribe %s to %v", testSubscriber, types.EventQueryVote))
@@ -248,17 +247,17 @@ func subscribeToVoter(cs *ConsensusState, addr []byte) <-chan tmpubsub.Message {
 //-------------------------------------------------------------------------------
 // consensus states
 
-func newConsensusState(state sm.State, pv types.PrivValidator, app abci.Application) *ConsensusState {
+func newConsensusState(state sm.State, pv types.PrivValidator, app abci.Application) *TxFlowState {
 	config := cfg.ResetTestRoot("consensus_state_test")
 	return newConsensusStateWithConfig(config, state, pv, app)
 }
 
-func newConsensusStateWithConfig(thisConfig *cfg.Config, state sm.State, pv types.PrivValidator, app abci.Application) *ConsensusState {
+func newConsensusStateWithConfig(thisConfig *cfg.Config, state sm.State, pv types.PrivValidator, app abci.Application) *TxFlowState {
 	blockDB := dbm.NewMemDB()
 	return newConsensusStateWithConfigAndBlockStore(thisConfig, state, pv, app, blockDB)
 }
 
-func newConsensusStateWithConfigAndBlockStore(thisConfig *cfg.Config, state sm.State, pv types.PrivValidator, app abci.Application, blockDB dbm.DB) *ConsensusState {
+func newConsensusStateWithConfigAndBlockStore(thisConfig *cfg.Config, state sm.State, pv types.PrivValidator, app abci.Application, blockDB dbm.DB) *TxFlowState {
 	// Get BlockStore
 	blockStore := bc.NewBlockStore(blockDB)
 
@@ -300,7 +299,7 @@ func loadPrivValidator(config *cfg.Config) *privval.FilePV {
 	return privValidator
 }
 
-func randConsensusState(nValidators int) (*ConsensusState, []*validatorStub) {
+func randConsensusState(nValidators int) (*TxFlowState, []*validatorStub) {
 	// Get State
 	state, privVals := randGenesisState(nValidators, false, 10)
 
@@ -545,8 +544,8 @@ func consensusLogger() log.Logger {
 	}).With("module", "consensus")
 }
 
-func randConsensusNet(nValidators int, testName string, tickerFunc func() TimeoutTicker,
-	appFunc func() abci.Application, configOpts ...func(*cfg.Config)) ([]*ConsensusState, cleanupFunc) {
+func randConsensusNet(nValidators int, testName string,
+	appFunc func() abci.Application, configOpts ...func(*cfg.Config)) ([]*TxFlowState, cleanupFunc) {
 	genDoc, privVals := randGenesisDoc(nValidators, false, 30)
 	css := make([]*ConsensusState, nValidators)
 	logger := consensusLogger()
@@ -576,8 +575,8 @@ func randConsensusNet(nValidators int, testName string, tickerFunc func() Timeou
 }
 
 // nPeers = nValidators + nNotValidator
-func randConsensusNetWithPeers(nValidators, nPeers int, testName string, tickerFunc func() TimeoutTicker,
-	appFunc func() abci.Application) ([]*ConsensusState, cleanupFunc) {
+func randConsensusNetWithPeers(nValidators, nPeers int, testName string,
+	appFunc func() abci.Application) ([]*TxFlowState, cleanupFunc) {
 
 	genDoc, privVals := randGenesisDoc(nValidators, false, testMinPower)
 	css := make([]*ConsensusState, nPeers)
@@ -657,54 +656,6 @@ func randGenesisState(numValidators int, randPower bool, minPower int64) (sm.Sta
 	s0, _ := sm.MakeGenesisState(genDoc)
 	return s0, privValidators
 }
-
-//------------------------------------
-// mock ticker
-
-func newMockTickerFunc(onlyOnce bool) func() TimeoutTicker {
-	return func() TimeoutTicker {
-		return &mockTicker{
-			c:        make(chan timeoutInfo, 10),
-			onlyOnce: onlyOnce,
-		}
-	}
-}
-
-// mock ticker only fires on RoundStepNewHeight
-// and only once if onlyOnce=true
-type mockTicker struct {
-	c chan timeoutInfo
-
-	mtx      sync.Mutex
-	onlyOnce bool
-	fired    bool
-}
-
-func (m *mockTicker) Start() error {
-	return nil
-}
-
-func (m *mockTicker) Stop() error {
-	return nil
-}
-
-func (m *mockTicker) ScheduleTimeout(ti timeoutInfo) {
-	m.mtx.Lock()
-	defer m.mtx.Unlock()
-	if m.onlyOnce && m.fired {
-		return
-	}
-	if ti.Step == cstypes.RoundStepNewHeight {
-		m.c <- ti
-		m.fired = true
-	}
-}
-
-func (m *mockTicker) Chan() <-chan timeoutInfo {
-	return m.c
-}
-
-func (*mockTicker) SetLogger(log.Logger) {}
 
 //------------------------------------
 

@@ -169,7 +169,7 @@ func TestByzantine(t *testing.T) {
 //-------------------------------
 // byzantine consensus functions
 
-func byzantineDecideProposalFunc(t *testing.T, height int64, round int, cs *ConsensusState, sw *p2p.Switch) {
+func byzantineDecideProposalFunc(t *testing.T, height int64, round int, cs *TxFlowState, sw *p2p.Switch) {
 	// byzantine user should create two proposals and try to split the vote.
 	// Avoid sending on internalMsgQueue and running consensus state.
 
@@ -204,7 +204,7 @@ func byzantineDecideProposalFunc(t *testing.T, height int64, round int, cs *Cons
 	}
 }
 
-func sendProposalAndParts(height int64, round int, cs *ConsensusState, peer p2p.Peer, proposal *types.Proposal, blockHash []byte, parts *types.PartSet) {
+func sendProposalAndParts(height int64, round int, cs *TxFlowState, peer p2p.Peer, proposal *types.Proposal, blockHash []byte, parts *types.PartSet) {
 	// proposal
 	msg := &ProposalMessage{Proposal: proposal}
 	peer.Send(DataChannel, cdc.MustMarshalBinaryBare(msg))
@@ -235,10 +235,10 @@ func sendProposalAndParts(height int64, round int, cs *ConsensusState, peer p2p.
 
 type ByzantineReactor struct {
 	cmn.Service
-	reactor *ConsensusReactor
+	reactor *TxFlowReactor
 }
 
-func NewByzantineReactor(conR *ConsensusReactor) *ByzantineReactor {
+func NewByzantineReactor(conR *TxFlowReactor) *ByzantineReactor {
 	return &ByzantineReactor{
 		Service: conR,
 		reactor: conR,

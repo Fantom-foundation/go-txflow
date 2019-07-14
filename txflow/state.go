@@ -14,7 +14,6 @@ import (
 
 	"github.com/Fantom-foundation/go-txflow/txflowstate"
 	"github.com/Fantom-foundation/go-txflow/types"
-	cstypes "github.com/tendermint/tendermint/consensus/types"
 	tmevents "github.com/tendermint/tendermint/libs/events"
 	"github.com/tendermint/tendermint/p2p"
 	sm "github.com/tendermint/tendermint/state"
@@ -33,28 +32,6 @@ var (
 	msgQueueSize = 1000
 )
 
-// msgs from the reactor which may update the state
-type msgInfo struct {
-	Msg    TxFlowMessage `json:"msg"`
-	PeerID p2p.ID        `json:"peer_key"`
-}
-
-// internally generated messages which may update the state
-// Timeouts are used for refresher states, to re-transmit deadlocked transactions
-type timeoutInfo struct {
-	Duration time.Duration `json:"duration"`
-	Height   int64         `json:"height"`
-}
-
-func (ti *timeoutInfo) String() string {
-	return fmt.Sprintf("%v ; %d/%d %v", ti.Duration, ti.Height)
-}
-
-// interface to the votepool
-type voteNotifier interface {
-	VoteAvailable() <-chan struct{}
-}
-
 // TxFlowState handles execution of the txflow algorithm.
 // It processes votes, and upon reaching agreement,
 // commits txs and executes them against the application.
@@ -62,13 +39,11 @@ type voteNotifier interface {
 type TxFlowState struct {
 	cmn.BaseService
 
-	Height                    int64
-	StartTime                 time.Time
-	CommitTime                time.Time
-	Validators                ttypes.ValidatorSet
-	TxVoteSets                map[string]*types.TxVoteSet
-	LastValidators            *ttypes.ValidatorSet
-	TriggeredTimeoutPrecommit bool
+	Height     int64
+	ChainID    string
+	StartTime  time.Time
+	Validators ttypes.ValidatorSet
+	TxVoteSets map[string]*types.TxVoteSet
 
 	// store txs and commits
 	txStore txflowstate.TxStore
@@ -76,24 +51,11 @@ type TxFlowState struct {
 	// execute finalized txs
 	txExec *txflowstate.TxExecutor
 
-	// notify us if votes are available
-	voteNotifier voteNotifier
-
 	// internal state
 	mtx sync.RWMutex
 
 	// This is the blockchain state, which essentially becomes a BFT timer
 	state sm.State // State until height-1.
-
-	// state changes may be triggered by: msgs from peers,
-	// msgs from ourself, or by timeouts
-	peerMsgQueue     chan msgInfo
-	internalMsgQueue chan msgInfo
-	timeoutTicker    TimeoutTicker
-
-	// information about added votes are written on this channel
-	// so statistics can be computed by reactor
-	statsMsgQueue chan msgInfo
 
 	// we use eventBus to trigger msg broadcasts in the reactor,
 	// and to notify external subscribers, eg. through a websocket
@@ -105,51 +67,32 @@ type TxFlowState struct {
 	replayMode   bool // so we don't log signing errors during replay
 	doWALCatchup bool // determines if we even try to do the catchup
 
-	// some functions can be overwritten for testing
-	decideTx  func(tx *ttypes.Tx)
-	doPrevote func(tx *ttypes.Tx)
-	setTx     func(tx *ttypes.Tx) error
-
 	// closed when we finish shutting down
 	done chan struct{}
-
-	// synchronous pubsub between consensus state and reactor.
-	// state only emits EventNewRoundStep and EventVote
-	evsw tmevents.EventSwitch
 
 	// for reporting metrics
 	metrics *Metrics
 }
 
-// StateOption sets an optional parameter on the TxFlowState.
-type StateOption func(*TxFlowState)
+// TxFlowOption sets an optional parameter on the TxFlowState.
+type TxFlowOption func(*TxFlowState)
 
 // NewTxFlowState returns a new TxFlowState.
 func NewTxFlowState(
 	state sm.State,
 	txExec *txflowstate.TxExecutor,
 	txStore txflowstate.TxStore,
-	voteNotifier voteNotifier,
-	options ...StateOption,
+	options ...TxFlowOption,
 ) *TxFlowState {
 	ts := &TxFlowState{
-		txExec:           txExec,
-		txStore:          txStore,
-		voteNotifier:     voteNotifier,
-		peerMsgQueue:     make(chan msgInfo, msgQueueSize),
-		internalMsgQueue: make(chan msgInfo, msgQueueSize),
-		timeoutTicker:    NewTimeoutTicker(),
-		statsMsgQueue:    make(chan msgInfo, msgQueueSize),
-		done:             make(chan struct{}),
-		doWALCatchup:     true,
-		wal:              nilWAL{},
-		evsw:             tmevents.NewEventSwitch(),
-		metrics:          NopMetrics(),
+		txExec:       txExec,
+		txStore:      txStore,
+		done:         make(chan struct{}),
+		doWALCatchup: true,
+		wal:          nilWAL{},
+		evsw:         tmevents.NewEventSwitch(),
+		metrics:      NopMetrics(),
 	}
-	// set function defaults (may be overwritten before calling Start)
-	ts.decideProposal = ts.defaultDecideProposal
-	ts.doPrevote = ts.defaultDoPrevote
-	ts.setProposal = ts.defaultSetProposal
 
 	ts.updateToState(state)
 
@@ -179,7 +122,7 @@ func (ts *TxFlowState) SetEventBus(b *ttypes.EventBus) {
 }
 
 // StateMetrics sets the metrics.
-func StateMetrics(metrics *Metrics) StateOption {
+func StateMetrics(metrics *Metrics) TxFlowOption {
 	return func(ts *TxFlowState) { ts.metrics = metrics }
 }
 
@@ -215,13 +158,6 @@ func (ts *TxFlowState) GetValidators() (int64, []*ttypes.Validator) {
 func (ts *TxFlowState) SetPrivValidator(priv types.PrivValidator) {
 	ts.mtx.Lock()
 	ts.privValidator = priv
-	ts.mtx.Unlock()
-}
-
-// SetTimeoutTicker sets the local timer. It may be useful to overwrite for testing.
-func (ts *TxFlowState) SetTimeoutTicker(timeoutTicker TimeoutTicker) {
-	ts.mtx.Lock()
-	ts.timeoutTicker = timeoutTicker
 	ts.mtx.Unlock()
 }
 
@@ -296,11 +232,6 @@ go run scripts/json2wal/main.go wal.json $WALFILE # rebuild the file without cor
 // timeoutRoutine: receive requests for timeouts on tickChan and fire timeouts on tockChan
 // receiveRoutine: serializes processing of proposoals, block parts, votes; coordinates state transitions
 func (ts *TxFlowState) startRoutines(maxSteps int) {
-	err := ts.timeoutTicker.Start()
-	if err != nil {
-		ts.Logger.Error("Error starting timeout ticker", "err", err)
-		return
-	}
 	go ts.receiveRoutine(maxSteps)
 }
 
@@ -340,25 +271,6 @@ func (ts *TxFlowState) updateHeight(height int64) {
 	ts.Height = height
 }
 
-// Attempt to schedule a timeout (by sending timeoutInfo on the tickChan)
-func (ts *TxFlowState) scheduleTimeout(duration time.Duration, height int64) {
-	ts.timeoutTicker.ScheduleTimeout(timeoutInfo{duration, height})
-}
-
-// send a msg into the receiveRoutine regarding our own proposal, block part, or vote
-func (ts *TxFlowState) sendInternalMessage(mi msgInfo) {
-	select {
-	case ts.internalMsgQueue <- mi:
-	default:
-		// NOTE: using the go-routine means our votes can
-		// be processed out of order.
-		// TODO: use CList here for strict determinism and
-		// attempt push to internalMsgQueue in receiveRoutine
-		ts.Logger.Info("Internal msg queue is full. Using a go-routine")
-		go func() { ts.internalMsgQueue <- mi }()
-	}
-}
-
 // Attempt to add the vote. if its a duplicate signature, dupeout the validator
 func (ts *TxFlowState) tryAddVote(vote *types.TxVote, peerID p2p.ID) (bool, error) {
 	added, err := ts.addVote(vote, peerID)
@@ -368,18 +280,18 @@ func (ts *TxFlowState) tryAddVote(vote *types.TxVote, peerID p2p.ID) (bool, erro
 		// If it's otherwise invalid, punish peer.
 		if err == ErrVoteHeightMismatch {
 			return added, err
-		} else if voteErr, ok := err.(*types.ErrVoteConflictingVotes); ok {
-			addr := cs.privValidator.GetPubKey().Address()
+		} else if voteErr, ok := err.(*types.ErrTxVoteConflictingVotes); ok {
+			addr := ts.privValidator.GetPubKey().Address()
 			if bytes.Equal(vote.ValidatorAddress, addr) {
-				cs.Logger.Error("Found conflicting vote from ourselves. Did you unsafe_reset a validator?", "height", vote.Height, "round", vote.Round, "type", vote.Type)
+				cs.Logger.Error("Found conflicting vote from ourselves. Did you unsafe_reset a validator?", "height", vote.Height)
 				return added, err
 			}
-			cs.evpool.AddEvidence(voteErr.DuplicateVoteEvidence)
+			ts.evpool.AddEvidence(voteErr.DuplicateVoteEvidence)
 			return added, err
 		} else {
 			// Probably an invalid signature / Bad peer.
 			// Seems this can also err sometimes with "Unexpected step" - perhaps not from a bad peer ?
-			cs.Logger.Error("Error attempting to add vote", "err", err)
+			ts.Logger.Error("Error attempting to add vote", "err", err)
 			return added, ErrAddingVote
 		}
 	}
@@ -391,111 +303,14 @@ func (ts *TxFlowState) tryAddVote(vote *types.TxVote, peerID p2p.ID) (bool, erro
 func (ts *TxFlowState) addVote(vote *types.TxVote) (added bool, err error) {
 	ts.Logger.Debug("addVote", "voteHeight", vote.Height, "valAddress", vote.ValidatorAddress, "tsHeight", ts.Height)
 
-	height := ts.Height
-	added, err = ts.TxVoteSets[vote.ValidatorAddress].AddVote(vote)
-	added, err = ts.Votes.AddVote(vote, peerID)
+	txHash := string(vote.TxHash)
+	added, err = ts.TxVoteSets[txHash].AddVote(vote)
 	if !added {
 		// Either duplicate, or error upon cs.Votes.AddByIndex()
 		return
 	}
-
-	cs.eventBus.PublishEventVote(types.EventDataVote{Vote: vote})
-	cs.evsw.FireEvent(types.EventVote, vote)
-
-	switch vote.Type {
-	case types.PrevoteType:
-		prevotes := cs.Votes.Prevotes(vote.Round)
-		cs.Logger.Info("Added to prevote", "vote", vote, "prevotes", prevotes.StringShort())
-
-		// If +2/3 prevotes for a block or nil for *any* round:
-		if blockID, ok := prevotes.TwoThirdsMajority(); ok {
-
-			// There was a polka!
-			// If we're locked but this is a recent polka, unlock.
-			// If it matches our ProposalBlock, update the ValidBlock
-
-			// Unlock if `cs.LockedRound < vote.Round <= cs.Round`
-			// NOTE: If vote.Round > cs.Round, we'll deal with it when we get to vote.Round
-			if (cs.LockedBlock != nil) &&
-				(cs.LockedRound < vote.Round) &&
-				(vote.Round <= cs.Round) &&
-				!cs.LockedBlock.HashesTo(blockID.Hash) {
-
-				cs.Logger.Info("Unlocking because of POL.", "lockedRound", cs.LockedRound, "POLRound", vote.Round)
-				cs.LockedRound = -1
-				cs.LockedBlock = nil
-				cs.LockedBlockParts = nil
-				cs.eventBus.PublishEventUnlock(cs.RoundStateEvent())
-			}
-
-			// Update Valid* if we can.
-			// NOTE: our proposal block may be nil or not what received a polka..
-			if len(blockID.Hash) != 0 && (cs.ValidRound < vote.Round) && (vote.Round == cs.Round) {
-
-				if cs.ProposalBlock.HashesTo(blockID.Hash) {
-					cs.Logger.Info(
-						"Updating ValidBlock because of POL.", "validRound", cs.ValidRound, "POLRound", vote.Round)
-					cs.ValidRound = vote.Round
-					cs.ValidBlock = cs.ProposalBlock
-					cs.ValidBlockParts = cs.ProposalBlockParts
-				} else {
-					cs.Logger.Info(
-						"Valid block we don't know about. Set ProposalBlock=nil",
-						"proposal", cs.ProposalBlock.Hash(), "blockId", blockID.Hash)
-					// We're getting the wrong block.
-					cs.ProposalBlock = nil
-				}
-				if !cs.ProposalBlockParts.HasHeader(blockID.PartsHeader) {
-					cs.ProposalBlockParts = types.NewPartSetFromHeader(blockID.PartsHeader)
-				}
-				cs.evsw.FireEvent(types.EventValidBlock, &cs.RoundState)
-				cs.eventBus.PublishEventValidBlock(cs.RoundStateEvent())
-			}
-		}
-
-		// If +2/3 prevotes for *anything* for future round:
-		if cs.Round < vote.Round && prevotes.HasTwoThirdsAny() {
-			// Round-skip if there is any 2/3+ of votes ahead of us
-			cs.enterNewRound(height, vote.Round)
-		} else if cs.Round == vote.Round && cstypes.RoundStepPrevote <= cs.Step { // current round
-			blockID, ok := prevotes.TwoThirdsMajority()
-			if ok && (cs.isProposalComplete() || len(blockID.Hash) == 0) {
-				cs.enterPrecommit(height, vote.Round)
-			} else if prevotes.HasTwoThirdsAny() {
-				cs.enterPrevoteWait(height, vote.Round)
-			}
-		} else if cs.Proposal != nil && 0 <= cs.Proposal.POLRound && cs.Proposal.POLRound == vote.Round {
-			// If the proposal is now complete, enter prevote of cs.Round.
-			if cs.isProposalComplete() {
-				cs.enterPrevote(height, cs.Round)
-			}
-		}
-
-	case types.PrecommitType:
-		precommits := cs.Votes.Precommits(vote.Round)
-		cs.Logger.Info("Added to precommit", "vote", vote, "precommits", precommits.StringShort())
-
-		blockID, ok := precommits.TwoThirdsMajority()
-		if ok {
-			// Executed as TwoThirdsMajority could be from a higher round
-			cs.enterNewRound(height, vote.Round)
-			cs.enterPrecommit(height, vote.Round)
-			if len(blockID.Hash) != 0 {
-				cs.enterCommit(height, vote.Round)
-				if cs.config.SkipTimeoutCommit && precommits.HasAll() {
-					cs.enterNewRound(cs.Height, 0)
-				}
-			} else {
-				cs.enterPrecommitWait(height, vote.Round)
-			}
-		} else if cs.Round <= vote.Round && precommits.HasTwoThirdsAny() {
-			cs.enterNewRound(height, vote.Round)
-			cs.enterPrecommitWait(height, vote.Round)
-		}
-
-	default:
-		panic(fmt.Sprintf("Unexpected vote type %X", vote.Type)) // go-wire should prevent this.
+	if ts.TxVoteSets[txHash].HasTwoThirdsMajority() {
+		//enter commit
 	}
-
 	return
 }
