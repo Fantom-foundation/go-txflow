@@ -9,7 +9,6 @@ import (
 	amino "github.com/tendermint/go-amino"
 	"github.com/tendermint/tendermint/crypto"
 	"github.com/tendermint/tendermint/crypto/ed25519"
-	"github.com/tendermint/tendermint/crypto/tmhash"
 	ttypes "github.com/tendermint/tendermint/types"
 )
 
@@ -22,7 +21,7 @@ func exampleVote() *TxVote {
 	return &TxVote{
 		Height:           12345,
 		Timestamp:        stamp,
-		TxHash:           tmhash.Sum([]byte("tx_hash")),
+		TxHash:           TxHash([]byte("tx_hash")),
 		ValidatorAddress: crypto.AddressHash([]byte("validator_address")),
 	}
 }

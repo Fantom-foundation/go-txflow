@@ -46,13 +46,11 @@ type Reactor struct {
 	txVotePool *TxVotePool
 	state      *state.State // State until height-1.
 	privVal    types.PrivValidator
-	chainID    string
 	ids        *txVotePoolIDs
 }
 
 // NewReactor returns a new TxpoolReactor with the given config and txpool.
 func NewReactor(config *cfg.MempoolConfig,
-	chainID string,
 	mempool *mempool.CListMempool,
 	txVotePool *TxVotePool,
 	state *state.State,
@@ -64,7 +62,6 @@ func NewReactor(config *cfg.MempoolConfig,
 		txVotePool: txVotePool,
 		state:      state,
 		privVal:    privVal,
-		chainID:    chainID,
 		ids:        newTxVotePoolIDs(),
 	}
 	txR.BaseReactor = *p2p.NewBaseReactor("TxVotePoolReactor", txR)
@@ -115,8 +112,13 @@ func (txR *Reactor) signTxRoutine() {
 		//Don't supress the error here, this needs work
 
 		//Only sign if I'm a validator
-		txVote := types.NewTxVote(txR.state.LastBlockHeight, memTx.Tx.Hash(), txR.privVal.GetPubKey().Address())
-		err := txR.privVal.SignTxVote(txR.chainID, &txVote)
+		txVote := types.NewTxVote(
+			txR.state.LastBlockHeight,
+			types.TxHash(memTx.Tx),
+			types.TxKey(memTx.Tx),
+			txR.privVal.GetPubKey().Address(),
+		)
+		err := txR.privVal.SignTxVote(txR.state.ChainID, &txVote)
 		if err != nil {
 			//panic error here
 		}

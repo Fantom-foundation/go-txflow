@@ -2,6 +2,7 @@ package types
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"sync"
 
 	"github.com/pkg/errors"
@@ -20,7 +21,8 @@ type TxVoteSet struct {
 	height  int64
 	valSet  *types.ValidatorSet
 
-	TxHash cmn.HexBytes
+	TxHash string
+	TxKey  [sha256.Size]byte
 
 	mtx   sync.Mutex
 	votes map[string]*TxVote // Primary votes to share
@@ -32,7 +34,8 @@ type TxVoteSet struct {
 func NewTxVoteSet(
 	chainID string,
 	height int64,
-	txHash cmn.HexBytes,
+	txHash string,
+	txKey [sha256.Size]byte,
 	valSet *types.ValidatorSet,
 ) *TxVoteSet {
 	return &TxVoteSet{
@@ -40,6 +43,7 @@ func NewTxVoteSet(
 		height:  height,
 		valSet:  valSet,
 		TxHash:  txHash,
+		TxKey:   txKey,
 		votes:   make(map[string]*TxVote, valSet.Size()),
 		sum:     0,
 		maj23:   false,
@@ -130,7 +134,7 @@ func (voteSet *TxVoteSet) getVote(valAddress cmn.HexBytes) (vote *TxVote, ok boo
 func (voteSet *TxVoteSet) addVerifiedVote(vote *TxVote, votingPower int64) (added bool, conflicting *TxVote) {
 	// Already exists in voteSet.votes?
 	if existing := voteSet.votes[vote.ValidatorAddress.String()]; existing != nil {
-		if bytes.Equal(existing.TxHash, vote.TxHash) {
+		if existing.TxHash == vote.TxHash {
 			panic("addVerifiedVote does not expect duplicate votes")
 		} else {
 			conflicting = existing
@@ -253,7 +257,7 @@ type Commit struct {
 	// NOTE: The Precommits are in order of address to preserve the bonded ValidatorSet order.
 	// Any peer with a block can gossip precommits by index with a peer without recalculating the
 	// active ValidatorSet.
-	TxHash  cmn.HexBytes `json:"tx_hash"`
+	TxHash  string       `json:"tx_hash"`
 	Commits []*CommitSig `json:"commits"`
 
 	// memoized in first call to corresponding method
@@ -266,7 +270,7 @@ type Commit struct {
 // NewCommit returns a new Commit with the given blockID and precommits.
 // TODO: memoize ValidatorSet in constructor so votes can be easily reconstructed
 // from CommitSig after #1648.
-func NewCommit(txHash cmn.HexBytes, commits []*CommitSig) *Commit {
+func NewCommit(txHash string, commits []*CommitSig) *Commit {
 	return &Commit{
 		TxHash:  txHash,
 		Commits: commits,

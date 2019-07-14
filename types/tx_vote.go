@@ -2,6 +2,7 @@ package types
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"time"
@@ -33,22 +34,35 @@ var (
 	ErrVoteNil                       = errors.New("Nil vote")
 )
 
+// txKey is the fixed length array sha256 hash used as the key in maps.
+func TxKey(tx ttypes.Tx) [sha256.Size]byte {
+	return sha256.Sum256(tx)
+}
+
+// txID is the hex encoded hash of the bytes as a types.Tx.
+func TxHash(tx []byte) string {
+	return fmt.Sprintf("%X", ttypes.Tx(tx).Hash())
+}
+
 // TxVote represents a commit vote from validators for consensus.
 type TxVote struct {
-	Height           int64          `json:"height"`
-	TxHash           cmn.HexBytes   `json:"tx_hash"` // zero if vote is nil.
-	Timestamp        time.Time      `json:"timestamp"`
-	ValidatorAddress crypto.Address `json:"validator_address"`
-	Signature        []byte         `json:"signature"`
+	Height           int64             `json:"height"`
+	TxHash           string            `json:"tx_hash"` // zero if vote is nil.
+	TxKey            [sha256.Size]byte `json:"tx_key"`
+	Timestamp        time.Time         `json:"timestamp"`
+	ValidatorAddress crypto.Address    `json:"validator_address"`
+	Signature        []byte            `json:"signature"`
 }
 
 func NewTxVote(height int64,
-	txHash cmn.HexBytes,
+	txHash string,
+	txKey [sha256.Size]byte,
 	validatorAddress crypto.Address,
 ) TxVote {
 	txVote := TxVote{
 		Height:           height,
 		TxHash:           txHash,
+		TxKey:            txKey,
 		Timestamp:        time.Now(),
 		ValidatorAddress: validatorAddress,
 		Signature:        nil,
@@ -87,7 +101,7 @@ func (vote *TxVote) String() string {
 	return fmt.Sprintf("TxVote{%X (%v) %X %X @ %s}",
 		cmn.Fingerprint(vote.ValidatorAddress),
 		vote.Height,
-		cmn.Fingerprint(vote.TxHash),
+		vote.TxHash,
 		cmn.Fingerprint(vote.Signature),
 		ttypes.CanonicalTime(vote.Timestamp),
 	)
@@ -162,7 +176,8 @@ func (cs *CommitSig) toVote() *TxVote {
 
 type CanonicalTxVote struct {
 	Height    int64 `binary:"fixed64"`
-	TxHash    cmn.HexBytes
+	TxHash    string
+	TxKey     [sha256.Size]byte
 	Timestamp time.Time
 	ChainID   string
 }

@@ -1,9 +1,7 @@
 package txflowstate
 
 import (
-	"github.com/Fantom-foundation/go-txflow/types"
 	abci "github.com/tendermint/tendermint/abci/types"
-	cmn "github.com/tendermint/tendermint/libs/common"
 	"github.com/tendermint/tendermint/mempool"
 	ttypes "github.com/tendermint/tendermint/types"
 )
@@ -67,20 +65,3 @@ func (MockMempool) Flush()                        {}
 func (MockMempool) FlushAppConn() error           { return nil }
 func (MockMempool) TxsAvailable() <-chan struct{} { return make(chan struct{}) }
 func (MockMempool) EnableTxsAvailable()           {}
-
-//------------------------------------------------------
-// txstore
-
-// TxStoreRPC is the tx store interface used by the RPC.
-type TxStoreRPC interface {
-	Height() int64
-
-	LoadTx(txHash cmn.HexBytes) *types.TxVoteSet
-	LoadTxCommit(txHash cmn.HexBytes) *types.Commit
-}
-
-// TxStore defines the BlockStore interface used by the ConsensusState.
-type TxStore interface {
-	TxStoreRPC
-	SaveTx(tx *types.TxVoteSet)
-}

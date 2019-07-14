@@ -1,4 +1,4 @@
-package blockchain
+package tx
 
 import (
 	"fmt"
@@ -51,7 +51,7 @@ func (ts *TxStore) Height() int64 {
 
 // LoadTx returns the tx for the given hash.
 // If no tx is found for the given hash, it returns nil.
-func (ts *TxStore) LoadTx(txHash cmn.HexBytes) *types.TxVoteSet {
+func (ts *TxStore) LoadTx(txHash string) *types.TxVoteSet {
 	var tx = new(types.TxVoteSet)
 	bz := ts.db.Get(calcTxKey(txHash))
 	if len(bz) == 0 {
@@ -66,7 +66,7 @@ func (ts *TxStore) LoadTx(txHash cmn.HexBytes) *types.TxVoteSet {
 
 // LoadTxCommit returns the Commit for the given txHash.
 // This commit consists of the +2/3 and other votes for tx,
-func (ts *TxStore) LoadTxCommit(txHash cmn.HexBytes) *types.Commit {
+func (ts *TxStore) LoadTxCommit(txHash string) *types.Commit {
 	var commit = new(types.Commit)
 	bz := ts.db.Get(calcTxCommitKey(txHash))
 	if len(bz) == 0 {
@@ -108,11 +108,11 @@ func (ts *TxStore) SaveTx(tx *types.TxVoteSet) {
 
 //-----------------------------------------------------------------------------
 
-func calcTxKey(txHash cmn.HexBytes) []byte {
+func calcTxKey(txHash string) []byte {
 	return []byte(fmt.Sprintf("H:%X", txHash))
 }
 
-func calcTxCommitKey(txHash cmn.HexBytes) []byte {
+func calcTxCommitKey(txHash string) []byte {
 	return []byte(fmt.Sprintf("C:%X", txHash))
 }
 

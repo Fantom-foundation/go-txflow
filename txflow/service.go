@@ -4,6 +4,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Fantom-foundation/go-txflow/mempool"
+	"github.com/Fantom-foundation/go-txflow/tx"
 	"github.com/Fantom-foundation/go-txflow/txflowstate"
 	"github.com/Fantom-foundation/go-txflow/txvotepool"
 	"github.com/Fantom-foundation/go-txflow/types"
@@ -18,16 +20,17 @@ import (
 //-----------------------------------------------------------------------------
 
 // TxFlowReactor defines a reactor for the consensus service.
-type TxFlowReactor struct {
+type TxFlow struct {
 	cmn.BaseService
 
 	StartTime  time.Time
 	TxVoteSets map[string]*types.TxVoteSet
 
-	txV *txvotepool.TxVotePool
+	txV   *txvotepool.TxVotePool
+	mempl *mempool.CListMempool
 
 	// store txs and commits
-	txStore txflowstate.TxStore
+	txStore *tx.TxStore
 
 	// execute finalized txs
 	txExec *txflowstate.TxExecutor
@@ -46,37 +49,33 @@ type TxFlowReactor struct {
 	metrics *Metrics
 }
 
-type ReactorOption func(*TxFlowReactor)
-
 // NewTxFlowReactor returns a new TxFlowReactor with the given
 // txflowState.
-func NewTxFlowReactor(
+func NewTxFlow(
 	state *sm.State,
 	txV *txvotepool.TxVotePool,
+	mempl *mempool.CListMempool,
 	txExec *txflowstate.TxExecutor,
-	txStore txflowstate.TxStore,
+	txStore *tx.TxStore,
 	evpool *evidence.EvidencePool,
-	options ...ReactorOption,
-) *TxFlowReactor {
-	txR := &TxFlowReactor{
-		txV:     txV,
-		txExec:  txExec,
-		txStore: txStore,
-		state:   state,
-		evpool:  evpool,
-		metrics: NopMetrics(),
+) *TxFlow {
+	txR := &TxFlow{
+		txV:        txV,
+		txExec:     txExec,
+		txStore:    txStore,
+		state:      state,
+		evpool:     evpool,
+		mempl:      mempl,
+		TxVoteSets: make(map[string]*types.TxVoteSet),
 	}
-	txR.BaseService = *cmn.NewBaseService(nil, "TxFlowReactor", txR)
-	for _, option := range options {
-		option(txR)
-	}
+	txR.BaseService = *cmn.NewBaseService(nil, "TxFlow", txR)
 
 	return txR
 }
 
 // OnStart implements BaseService by subscribing to events, which later will be
 // broadcasted to other peers and starting state if we're not in fast sync.
-func (txR *TxFlowReactor) OnStart() error {
+func (txR *TxFlow) OnStart() error {
 	txR.Logger.Info("TxFlowReactor OnStart()")
 	go txR.checkMaj23Routine()
 
@@ -85,39 +84,39 @@ func (txR *TxFlowReactor) OnStart() error {
 
 // OnStop implements BaseService by unsubscribing from events and stopping
 // state.
-func (txR *TxFlowReactor) OnStop() {
+func (txR *TxFlow) OnStop() {
 
 }
 
 // SetEventBus sets event bus.
-func (txR *TxFlowReactor) SetEventBus(b *ttypes.EventBus) {
+func (txR *TxFlow) SetEventBus(b *ttypes.EventBus) {
 	txR.eventBus = b
 }
 
 // String returns a string representation of the ConsensusReactor.
 // NOTE: For now, it is just a hard-coded string to avoid accessing unprotected shared variables.
 // TODO: improve!
-func (txR *TxFlowReactor) String() string {
+func (txR *TxFlow) String() string {
 	// better not to access shared variables
 	return "TxFlowReactor" // conR.StringIndented("")
 }
 
 // GetValidators returns a copy of the current validators.
-func (txR *TxFlowReactor) GetValidators() (int64, []*ttypes.Validator) {
+func (txR *TxFlow) GetValidators() (int64, []*ttypes.Validator) {
 	txR.mtx.RLock()
 	defer txR.mtx.RUnlock()
 	return txR.state.LastBlockHeight, txR.state.Validators.Copy().Validators
 }
 
 // LoadCommit loads the commit for a given hash.
-func (txR *TxFlowReactor) LoadCommit(txHash cmn.HexBytes) *types.Commit {
+func (txR *TxFlow) LoadCommit(txHash string) *types.Commit {
 	txR.mtx.RLock()
 	defer txR.mtx.RUnlock()
 	return txR.txStore.LoadTxCommit(txHash)
 }
 
 // Sign new mempool txs.
-func (txR *TxFlowReactor) checkMaj23Routine() {
+func (txR *TxFlow) checkMaj23Routine() {
 	var next *clist.CElement
 	for {
 		// In case of both next.NextWaitChan() and peer.Quit() are variable at the same time
@@ -163,7 +162,7 @@ func (txR *TxFlowReactor) checkMaj23Routine() {
 }
 
 // TryAddVote Attempt to add the vote. if its a duplicate signature, dupeout the validator
-func (txR *TxFlowReactor) TryAddVote(vote *types.TxVote) (bool, error) {
+func (txR *TxFlow) TryAddVote(vote *types.TxVote) (bool, error) {
 	added, err := txR.addVote(vote)
 	if err != nil {
 		// If the vote height is off, we'll just ignore it,
@@ -186,8 +185,13 @@ func (txR *TxFlowReactor) TryAddVote(vote *types.TxVote) (bool, error) {
 
 //-----------------------------------------------------------------------------
 
-func (txR *TxFlowReactor) addVote(vote *types.TxVote) (added bool, err error) {
-	txR.Logger.Debug("addVote", "voteHeight", vote.Height, "valAddress", vote.ValidatorAddress)
+func (txR *TxFlow) addVote(vote *types.TxVote) (added bool, err error) {
+	txR.Logger.Debug("addVote",
+		"voteHeight", vote.Height,
+		"valAddress", vote.ValidatorAddress,
+		"txHash", vote.TxHash,
+		"txKey", vote.TxKey,
+	)
 
 	txHash := string(vote.TxHash)
 	if _, ok := txR.TxVoteSets[txHash]; !ok {
@@ -195,6 +199,7 @@ func (txR *TxFlowReactor) addVote(vote *types.TxVote) (added bool, err error) {
 			txR.state.ChainID,
 			txR.state.LastBlockHeight,
 			vote.TxHash,
+			vote.TxKey,
 			txR.state.Validators,
 		)
 		txR.TxVoteSets[txHash] = voteSet
@@ -207,11 +212,9 @@ func (txR *TxFlowReactor) addVote(vote *types.TxVote) (added bool, err error) {
 	}
 	if txR.TxVoteSets[txHash].HasTwoThirdsMajority() {
 		//enter commit
+		txR.txStore.SaveTx(txR.TxVoteSets[txHash])
+		tx := txR.mempl.GetTx(txR.TxVoteSets[txHash].TxKey)
+		txR.txExec.ApplyTx(&tx)
 	}
 	return
-}
-
-// ReactorMetrics sets the metrics
-func ReactorMetrics(metrics *Metrics) ReactorOption {
-	return func(txR *TxFlowReactor) { txR.metrics = metrics }
 }

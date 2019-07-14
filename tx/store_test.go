@@ -1,4 +1,4 @@
-package blockchain
+package tx
 
 import (
 	"bytes"
@@ -25,9 +25,9 @@ import (
 type cleanupFunc func()
 
 // make a Commit with a single vote containing just the height and a timestamp
-func makeTestCommit(txHash cmn.HexBytes, timestamp time.Time) *types.Commit {
+func makeTestCommit(txHash string, timestamp time.Time) *types.Commit {
 	commitSigs := []*types.CommitSig{{TxHash: txHash, Timestamp: timestamp}}
-	return types.NewCommit(cmn.HexBytes{}, commitSigs)
+	return types.NewCommit("", commitSigs)
 }
 
 func makeStateAndTxStore(logger log.Logger) (sm.State, *TxStore, cleanupFunc) {
@@ -97,7 +97,7 @@ var (
 func TestMain(m *testing.M) {
 	var cleanup cleanupFunc
 	state, _, cleanup = makeStateAndTxStore(log.NewTMLogger(new(bytes.Buffer)))
-	tx = makeTx([]byte("0x1"), state, new(types.Commit))
+	tx = makeTx("0x1", state, new(types.Commit))
 	code := m.Run()
 	cleanup()
 	os.Exit(code)
@@ -111,7 +111,7 @@ func TestTxStoreSaveLoadBlock(t *testing.T) {
 	require.Equal(t, ts.Height(), int64(0), "initially the height should be zero")
 
 	// check there are no tx at various heights
-	noTxHashes := [][]byte{[]byte("0"), []byte("-1"), []byte("100"), []byte("1000"), []byte("2")}
+	noTxHashes := []string{"0", "-1", "100", "1000", "2"}
 	for i, hash := range noTxHashes {
 		if g := ts.LoadTx(hash); g != nil {
 			t.Errorf("#%d: hash(%X) got a tx; want nil", i, hash)
@@ -119,16 +119,17 @@ func TestTxStoreSaveLoadBlock(t *testing.T) {
 	}
 
 	// save a block
-	tx := makeTx([]byte("0"), state, new(types.Commit))
+	tx := makeTx("0", state, new(types.Commit))
 	ts.SaveTx(tx)
 	require.Equal(t, ts.Height(), tx.Height, "expecting the new height to be changed")
 }
 
-func makeTx(txHash cmn.HexBytes, state sm.State, lastCommit *types.Commit) *types.TxVoteSet {
+func makeTx(txHash string, state sm.State, lastCommit *types.Commit) *types.TxVoteSet {
 	tx := types.NewTxVoteSet(
 		state.ChainID,
 		state.LastBlockHeight,
 		txHash,
+		types.TxKey([]byte{}),
 		state.Validators,
 	)
 	return tx

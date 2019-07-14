@@ -184,6 +184,14 @@ func (mem *CListMempool) Size() int {
 	return mem.txs.Len()
 }
 
+func (mem *CListMempool) GetTx(txKey [sha256.Size]byte) types.Tx {
+	if e, ok := mem.txsMap.Load(txKey); ok {
+		memTx := e.(*clist.CElement).Value.(*MempoolTx)
+		return memTx.Tx
+	}
+	return nil
+}
+
 func (mem *CListMempool) TxsBytes() int64 {
 	return atomic.LoadInt64(&mem.txsBytes)
 }

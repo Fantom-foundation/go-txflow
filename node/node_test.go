@@ -14,6 +14,7 @@ import (
 
 	mempl "github.com/Fantom-foundation/go-txflow/mempool"
 	"github.com/Fantom-foundation/go-txflow/privval"
+	"github.com/Fantom-foundation/go-txflow/txflow"
 	"github.com/Fantom-foundation/go-txflow/txvotepool"
 	"github.com/Fantom-foundation/go-txflow/types"
 	"github.com/tendermint/tendermint/abci/example/kvstore"
@@ -365,15 +366,16 @@ func TestTxVotes(t *testing.T) {
 	assert.Equal(t, true, txVotePoolReactor.IsRunning())
 	assert.Equal(t, 16, mempool.Size())
 
-	txflowLogger := logger.With("module", "txflow")
-	txflow := txvotepool.NewTxFlowVoteReactor(
+	txfLogger := logger.With("module", "txflow")
+	txf := txflow.NewTxFlow(
+		&state,
 		txVotePool,
-		state.LastBlockHeight,
-		state.ChainID,
-		state.Validators,
+		nil,
+		nil,
+		nil,
 	)
-	txflow.SetLogger(txflowLogger)
-	err = txflow.Start()
+	txf.SetLogger(txfLogger)
+	err = txf.Start()
 	assert.NoError(t, err)
 }
 
