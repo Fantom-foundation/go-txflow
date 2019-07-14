@@ -14,7 +14,9 @@ import (
 
 	mempl "github.com/Fantom-foundation/go-txflow/mempool"
 	"github.com/Fantom-foundation/go-txflow/privval"
+	"github.com/Fantom-foundation/go-txflow/tx"
 	"github.com/Fantom-foundation/go-txflow/txflow"
+	"github.com/Fantom-foundation/go-txflow/txflowstate"
 	"github.com/Fantom-foundation/go-txflow/txvotepool"
 	"github.com/Fantom-foundation/go-txflow/types"
 	"github.com/tendermint/tendermint/abci/example/kvstore"
@@ -39,7 +41,7 @@ func TestNodeStartStop(t *testing.T) {
 	defer os.RemoveAll(config.RootDir)
 
 	// create & start node
-	n, err := DefaultNewNode(config, log.TestingLogger())
+	n, err := DefaultNewNode(config, log.NewTMLogger(log.NewSyncWriter(os.Stdout)))
 	require.NoError(t, err)
 	err = n.Start()
 	require.NoError(t, err)
@@ -251,7 +253,6 @@ func TestCreateProposalBlock(t *testing.T) {
 	txVotePoolLogger := logger.With("module", "txvotepool")
 	txVotePoolReactor := txvotepool.NewReactor(
 		config.Mempool,
-		state.ChainID,
 		mempool,
 		txVPool,
 		&state,
@@ -315,10 +316,10 @@ func TestTxVotes(t *testing.T) {
 	require.Nil(t, err)
 	defer proxyApp.Stop()
 
-	logger := log.NewTMLogger(log.NewSyncWriter(os.Stdout))
+	logger := log.TestingLogger()
 
 	var height int64 = 1
-	state, _, privVal := stateWithPrivValidator(1, height)
+	state, stateDB, privVal := stateWithPrivValidator(1, height)
 	maxBytes := 16384
 	state.ConsensusParams.Block.MaxBytes = int64(maxBytes)
 
@@ -344,7 +345,6 @@ func TestTxVotes(t *testing.T) {
 	txVotePoolLogger := logger.With("module", "txvotepool")
 	txVotePoolReactor := txvotepool.NewReactor(
 		config.Mempool,
-		state.ChainID,
 		mempool,
 		txVotePool,
 		&state,
@@ -366,12 +366,22 @@ func TestTxVotes(t *testing.T) {
 	assert.Equal(t, true, txVotePoolReactor.IsRunning())
 	assert.Equal(t, 16, mempool.Size())
 
+	txStore := tx.NewTxStore(stateDB)
+
+	txExec := txflowstate.NewTxExecutor(
+		logger.With("module", "state"),
+		proxyApp.Consensus(),
+		mempool,
+		txVotePool,
+	)
+
 	txfLogger := logger.With("module", "txflow")
 	txf := txflow.NewTxFlow(
 		&state,
 		txVotePool,
-		nil,
-		nil,
+		mempool,
+		txExec,
+		txStore,
 		nil,
 	)
 	txf.SetLogger(txfLogger)

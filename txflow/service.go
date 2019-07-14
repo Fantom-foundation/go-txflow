@@ -214,7 +214,7 @@ func (txR *TxFlow) addVote(vote *types.TxVote) (added bool, err error) {
 		//enter commit
 		txR.txStore.SaveTx(txR.TxVoteSets[txHash])
 		tx := txR.mempl.GetTx(txR.TxVoteSets[txHash].TxKey)
-		txR.txExec.ApplyTx(&tx)
+		txR.txExec.ApplyTx(txR.state, tx)
 	}
 	return
 }

@@ -10,6 +10,7 @@ import (
 
 	mempl "github.com/Fantom-foundation/go-txflow/mempool"
 	"github.com/Fantom-foundation/go-txflow/tx"
+	"github.com/Fantom-foundation/go-txflow/txflowstate"
 	"github.com/Fantom-foundation/go-txflow/txvotepool"
 	"github.com/Fantom-foundation/go-txflow/types"
 	"github.com/tendermint/tendermint/abci/example/kvstore"
@@ -84,12 +85,21 @@ func TestTxVotes(t *testing.T) {
 
 	txStore := tx.NewTxStore(stateDB)
 
+	// make block executor for consensus and blockchain reactors to execute blocks
+
+	txExec := txflowstate.NewTxExecutor(
+		logger.With("module", "state"),
+		proxyApp.Consensus(),
+		mempool,
+		txVotePool,
+	)
+
 	txfLogger := logger.With("module", "txflow")
 	txf := NewTxFlow(
 		&state,
 		txVotePool,
 		mempool,
-		nil,
+		txExec,
 		txStore,
 		nil,
 	)

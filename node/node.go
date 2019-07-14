@@ -18,6 +18,9 @@ import (
 
 	mempl "github.com/Fantom-foundation/go-txflow/mempool"
 	"github.com/Fantom-foundation/go-txflow/privval"
+	"github.com/Fantom-foundation/go-txflow/tx"
+	"github.com/Fantom-foundation/go-txflow/txflow"
+	"github.com/Fantom-foundation/go-txflow/txflowstate"
 	"github.com/Fantom-foundation/go-txflow/txvotepool"
 	"github.com/Fantom-foundation/go-txflow/types"
 	amino "github.com/tendermint/go-amino"
@@ -121,32 +124,45 @@ type Node struct {
 	isListening bool
 
 	// services
-	eventBus          *ttypes.EventBus // pub/sub for services
-	stateDB           dbm.DB
-	blockStore        *bc.BlockStore        // store the blockchain to disk
-	bcReactor         *bc.BlockchainReactor // for fast-syncing
-	mempoolReactor    *mempl.Reactor        // for gossipping transactions
-	mempool           tmempl.Mempool
+	eventBus       *ttypes.EventBus // pub/sub for services
+	stateDB        dbm.DB
+	blockStore     *bc.BlockStore        // store the blockchain to disk
+	bcReactor      *bc.BlockchainReactor // for fast-syncing
+	mempoolReactor *mempl.Reactor        // for gossipping transactions
+	mempool        tmempl.Mempool
+
+	//TxVotePool system for aBFT voting on mempool Tx's
 	txvotepoolReactor *txvotepool.Reactor
 	txvotepool        *txvotepool.TxVotePool
-	consensusState    *cs.ConsensusState     // latest consensus state
-	consensusReactor  *cs.ConsensusReactor   // for participating in the consensus
-	pexReactor        *pex.PEXReactor        // for exchanging peer addresses
-	evidencePool      *evidence.EvidencePool // tracking evidence
-	proxyApp          proxy.AppConns         // connection to the application
-	rpcListeners      []net.Listener         // rpc servers
-	txIndexer         txindex.TxIndexer
-	indexerService    *txindex.IndexerService
-	prometheusSrv     *http.Server
+	txflow            *txflow.TxFlow
+
+	txStore *tx.TxStore
+
+	consensusState   *cs.ConsensusState     // latest consensus state
+	consensusReactor *cs.ConsensusReactor   // for participating in the consensus
+	pexReactor       *pex.PEXReactor        // for exchanging peer addresses
+	evidencePool     *evidence.EvidencePool // tracking evidence
+	proxyApp         proxy.AppConns         // connection to the application
+	rpcListeners     []net.Listener         // rpc servers
+	txIndexer        txindex.TxIndexer
+	indexerService   *txindex.IndexerService
+	prometheusSrv    *http.Server
 }
 
-func initDBs(config *cfg.Config, dbProvider node.DBProvider) (blockStore *bc.BlockStore, stateDB dbm.DB, err error) {
+func initDBs(config *cfg.Config, dbProvider node.DBProvider) (blockStore *bc.BlockStore, txStore *tx.TxStore, stateDB dbm.DB, err error) {
 	var blockStoreDB dbm.DB
 	blockStoreDB, err = dbProvider(&node.DBContext{"blockstore", config})
 	if err != nil {
 		return
 	}
 	blockStore = bc.NewBlockStore(blockStoreDB)
+
+	var txStoreDB dbm.DB
+	txStoreDB, err = dbProvider(&node.DBContext{"txstore", config})
+	if err != nil {
+		return
+	}
+	txStore = tx.NewTxStore(txStoreDB)
 
 	stateDB, err = dbProvider(&node.DBContext{"state", config})
 	if err != nil {
@@ -283,7 +299,6 @@ func createTxVotePoolAndTxVotePoolReactor(config *cfg.Config,
 	txVotePoolLogger := logger.With("module", "txvotepool")
 	txVotePoolReactor := txvotepool.NewReactor(
 		config.Mempool,
-		state.ChainID,
 		mempool,
 		txVPool,
 		state,
@@ -490,7 +505,7 @@ func NewNode(config *cfg.Config,
 	logger log.Logger,
 	options ...Option) (*Node, error) {
 
-	blockStore, stateDB, err := initDBs(config, dbProvider)
+	blockStore, txStore, stateDB, err := initDBs(config, dbProvider)
 	if err != nil {
 		return nil, err
 	}
@@ -573,6 +588,24 @@ func NewNode(config *cfg.Config,
 		sm.BlockExecutorWithMetrics(smMetrics),
 	)
 
+	txExec := txflowstate.NewTxExecutor(
+		logger.With("module", "state"),
+		proxyApp.Consensus(),
+		mempool,
+		txvotepool,
+	)
+
+	txfLogger := logger.With("module", "txflow")
+	txf := txflow.NewTxFlow(
+		&state,
+		txvotepool,
+		mempool,
+		txExec,
+		txStore,
+		nil,
+	)
+	txf.SetLogger(txfLogger)
+
 	// Make BlockchainReactor
 	bcReactor := bc.NewBlockchainReactor(state.Copy(), blockExec, blockStore, fastSync)
 	bcReactor.SetLogger(logger.With("module", "blockchain"))
@@ -649,6 +682,7 @@ func NewNode(config *cfg.Config,
 		mempool:           mempool,
 		txvotepoolReactor: txvotepoolReactor,
 		txvotepool:        txvotepool,
+		txflow:            txf,
 		consensusState:    consensusState,
 		consensusReactor:  consensusReactor,
 		pexReactor:        pexReactor,
@@ -722,6 +756,9 @@ func (n *Node) OnStart() error {
 		return errors.Wrap(err, "could not dial peers from persistent_peers field")
 	}
 
+	n.txvotepoolReactor.Start()
+	n.txflow.Start()
+
 	return nil
 }
 
@@ -768,6 +805,9 @@ func (n *Node) OnStop() {
 			n.Logger.Error("Prometheus HTTP server Shutdown", "err", err)
 		}
 	}
+
+	n.txvotepoolReactor.Stop()
+	n.txflow.Stop()
 }
 
 // ConfigureRPC sets all variables in rpccore so they will serve
