@@ -20,7 +20,7 @@ type TxVoteSet struct {
 	height  int64
 	valSet  *types.ValidatorSet
 
-	txHash cmn.HexBytes
+	TxHash cmn.HexBytes
 
 	mtx   sync.Mutex
 	votes map[string]*TxVote // Primary votes to share
@@ -39,7 +39,7 @@ func NewTxVoteSet(
 		chainID: chainID,
 		height:  height,
 		valSet:  valSet,
-		txHash:  txHash,
+		TxHash:  txHash,
 		votes:   make(map[string]*TxVote, valSet.Size()),
 		sum:     0,
 		maj23:   false,
@@ -218,6 +218,59 @@ func (voteSet *TxVoteSet) sumTotalFrac() (int64, int64, float64) {
 	voted, total := voteSet.sum, voteSet.valSet.TotalVotingPower()
 	fracVoted := float64(voted) / float64(total)
 	return voted, total, fracVoted
+}
+
+//--------------------------------------------------------------------------------
+// Commit
+
+// MakeCommit constructs a Commit from the VoteSet.
+// Panics if the vote type is not PrecommitType or if
+// there's no +2/3 votes for a single block.
+func (voteSet *TxVoteSet) MakeCommit() *Commit {
+	voteSet.mtx.Lock()
+	defer voteSet.mtx.Unlock()
+
+	// Make sure we have a 2/3 majority
+	if !voteSet.maj23 {
+		panic("Cannot MakeCommit() unless a blockhash has +2/3")
+	}
+
+	// For every validator, get the precommit
+	commitSigs := make([]*CommitSig, len(voteSet.votes))
+	i := 0
+	for _, v := range voteSet.votes {
+		commitSigs[i] = v.CommitSig()
+		i = i + 1
+	}
+	return NewCommit(voteSet.TxHash, commitSigs)
+}
+
+//-------------------------------------
+
+// Commit contains the evidence that a block was committed by a set of validators.
+// NOTE: Commit is empty for height 1, but never nil.
+type Commit struct {
+	// NOTE: The Precommits are in order of address to preserve the bonded ValidatorSet order.
+	// Any peer with a block can gossip precommits by index with a peer without recalculating the
+	// active ValidatorSet.
+	TxHash  cmn.HexBytes `json:"tx_hash"`
+	Commits []*CommitSig `json:"commits"`
+
+	// memoized in first call to corresponding method
+	// NOTE: can't memoize in constructor because constructor
+	// isn't used for unmarshaling
+	height int64
+	hash   cmn.HexBytes
+}
+
+// NewCommit returns a new Commit with the given blockID and precommits.
+// TODO: memoize ValidatorSet in constructor so votes can be easily reconstructed
+// from CommitSig after #1648.
+func NewCommit(txHash cmn.HexBytes, commits []*CommitSig) *Commit {
+	return &Commit{
+		TxHash:  txHash,
+		Commits: commits,
+	}
 }
 
 //--------------------------------------------------------------------------------
