@@ -221,7 +221,7 @@ func (txR *Reactor) broadcastTxRoutine(peer p2p.Peer) {
 			}
 		}
 
-		txTx := next.Value.(*mempoolTxVote)
+		txTx := next.Value.(*MempoolTxVote)
 
 		// make sure the peer is up to date
 		peerState, ok := peer.Get(ttypes.PeerStateKey).(PeerState)
@@ -240,9 +240,9 @@ func (txR *Reactor) broadcastTxRoutine(peer p2p.Peer) {
 		}
 
 		// ensure peer hasn't already sent us this tx
-		if _, ok := txTx.senders.Load(peerID); !ok {
+		if _, ok := txTx.Senders.Load(peerID); !ok {
 			// send txTx
-			msg := &TxVoteMessage{Tx: txTx.tx}
+			msg := &TxVoteMessage{Tx: txTx.Tx}
 			success := peer.Send(TxVotePoolChannel, cdc.MustMarshalBinaryBare(msg))
 			if !success {
 				time.Sleep(peerCatchupSleepIntervalMS * time.Millisecond)

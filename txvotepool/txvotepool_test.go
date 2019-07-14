@@ -93,9 +93,9 @@ func TestReapMaxBytesMaxGas(t *testing.T) {
 
 	// Ensure gas calculation behaves as expected
 	checkTxs(t, mempool, 1, UnknownPeerID)
-	tx0 := mempool.TxsFront().Value.(*mempoolTxVote)
+	tx0 := mempool.TxsFront().Value.(*MempoolTxVote)
 	// ensure each tx is 20 bytes long
-	require.Equal(t, tx0.tx.Size(), 20, "Tx is longer than 20 bytes")
+	require.Equal(t, tx0.Tx.Size(), 20, "Tx is longer than 20 bytes")
 	mempool.Flush()
 
 	// each table driven test creates numTxsToCreate txs with checkTx, and at the end clears all remaining txs.

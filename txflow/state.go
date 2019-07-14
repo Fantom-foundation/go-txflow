@@ -8,13 +8,13 @@ import (
 
 	"github.com/pkg/errors"
 
+	"github.com/tendermint/tendermint/config"
 	cmn "github.com/tendermint/tendermint/libs/common"
 	"github.com/tendermint/tendermint/libs/log"
 	ttypes "github.com/tendermint/tendermint/types"
 
 	"github.com/Fantom-foundation/go-txflow/txflowstate"
 	"github.com/Fantom-foundation/go-txflow/types"
-	tmevents "github.com/tendermint/tendermint/libs/events"
 	"github.com/tendermint/tendermint/p2p"
 	sm "github.com/tendermint/tendermint/state"
 )
@@ -38,11 +38,12 @@ var (
 // The internal state machine receives input from peers, the internal validator, and from a timer.
 type TxFlowState struct {
 	cmn.BaseService
+	config *config.ConsensusConfig
 
 	Height     int64
 	ChainID    string
 	StartTime  time.Time
-	Validators ttypes.ValidatorSet
+	Validators *ttypes.ValidatorSet
 	TxVoteSets map[string]*types.TxVoteSet
 
 	// store txs and commits
@@ -85,20 +86,19 @@ func NewTxFlowState(
 	options ...TxFlowOption,
 ) *TxFlowState {
 	ts := &TxFlowState{
+		Height:       state.LastBlockHeight,
+		ChainID:      state.ChainID,
+		StartTime:    time.Now(),
+		Validators:   state.Validators,
+		TxVoteSets:   make(map[string]*types.TxVoteSet),
 		txExec:       txExec,
 		txStore:      txStore,
 		done:         make(chan struct{}),
 		doWALCatchup: true,
 		wal:          nilWAL{},
-		evsw:         tmevents.NewEventSwitch(),
 		metrics:      NopMetrics(),
 	}
 
-	ts.updateToState(state)
-
-	// Don't call scheduleRound0 yet.
-	// We do that upon Start().
-	ts.reconstructLastCommit(state)
 	ts.BaseService = *cmn.NewBaseService(nil, "TxFlowState", ts)
 	for _, option := range options {
 		option(ts)
@@ -112,7 +112,6 @@ func NewTxFlowState(
 // SetLogger implements Service.
 func (ts *TxFlowState) SetLogger(l log.Logger) {
 	ts.BaseService.Logger = l
-	ts.timeoutTicker.SetLogger(l)
 }
 
 // SetEventBus sets event bus.
@@ -134,17 +133,17 @@ func (ts *TxFlowState) String() string {
 
 // GetState returns a copy of the chain state.
 func (ts *TxFlowState) GetState() sm.State {
-	cs.mtx.RLock()
-	defer cs.mtx.RUnlock()
-	return cs.state.Copy()
+	ts.mtx.RLock()
+	defer ts.mtx.RUnlock()
+	return ts.state.Copy()
 }
 
 // GetLastHeight returns the last height committed.
 // If there were no blocks, returns 0.
 func (ts *TxFlowState) GetLastHeight() int64 {
-	cs.mtx.RLock()
-	defer cs.mtx.RUnlock()
-	return cs.Height - 1
+	ts.mtx.RLock()
+	defer ts.mtx.RUnlock()
+	return ts.Height - 1
 }
 
 // GetValidators returns a copy of the current validators.
@@ -154,15 +153,8 @@ func (ts *TxFlowState) GetValidators() (int64, []*ttypes.Validator) {
 	return ts.state.LastBlockHeight, ts.state.Validators.Copy().Validators
 }
 
-// SetPrivValidator sets the private validator account for signing votes.
-func (ts *TxFlowState) SetPrivValidator(priv types.PrivValidator) {
-	ts.mtx.Lock()
-	ts.privValidator = priv
-	ts.mtx.Unlock()
-}
-
 // LoadCommit loads the commit for a given hash.
-func (ts *TxFlowState) LoadCommit(txHash cmn.HexBytes) *ttypes.Commit {
+func (ts *TxFlowState) LoadCommit(txHash cmn.HexBytes) *types.Commit {
 	ts.mtx.RLock()
 	defer ts.mtx.RUnlock()
 	return ts.txStore.LoadTxCommit(txHash)
@@ -171,9 +163,6 @@ func (ts *TxFlowState) LoadCommit(txHash cmn.HexBytes) *ttypes.Commit {
 // OnStart implements cmn.Service.
 // It loads the latest state via the WAL, and starts the timeout and receive routines.
 func (ts *TxFlowState) OnStart() error {
-	if err := ts.evsw.Start(); err != nil {
-		return err
-	}
 
 	// we may set the WAL in testing before calling Start,
 	// so only OpenWAL if its still the nilWAL

@@ -216,8 +216,8 @@ func (txVotePool *TxVotePool) CheckTxWithInfo(tx types.TxVote, txInfo mempool.Tx
 		// (eg. after committing a block, txs are removed from mempool but not cache),
 		// so we only record the sender for txs still in the mempool.
 		if e, ok := txVotePool.txsMap.Load(txVoteKey(tx)); ok {
-			memTxVote := e.(*clist.CElement).Value.(*mempoolTxVote)
-			if _, loaded := memTxVote.senders.LoadOrStore(txInfo.SenderID, true); loaded {
+			memTxVote := e.(*clist.CElement).Value.(*MempoolTxVote)
+			if _, loaded := memTxVote.Senders.LoadOrStore(txInfo.SenderID, true); loaded {
 				// TODO: consider punishing peer for dups,
 				// its non-trivial since invalid txs can become valid,
 				// but they can spam the same tx with little cost to them atm.
@@ -242,12 +242,12 @@ func (txVotePool *TxVotePool) CheckTxWithInfo(tx types.TxVote, txInfo mempool.Tx
 	}
 	// END WAL
 
-	memTxVote := &mempoolTxVote{
+	memTxVote := &MempoolTxVote{
 		height: txVotePool.height,
-		tx:     tx,
+		Tx:     tx,
 	}
 
-	memTxVote.senders.Store(txInfo.SenderID, true)
+	memTxVote.Senders.Store(txInfo.SenderID, true)
 	txVotePool.addTx(memTxVote)
 	txVotePool.logger.Info("Added good vote",
 		"signature", TxVoteID(tx),
@@ -262,11 +262,11 @@ func (txVotePool *TxVotePool) CheckTxWithInfo(tx types.TxVote, txInfo mempool.Tx
 
 // Called from:
 //  - resCbFirstTime (lock not held) if tx is valid
-func (txVotePool *TxVotePool) addTx(memTx *mempoolTxVote) {
+func (txVotePool *TxVotePool) addTx(memTx *MempoolTxVote) {
 	e := txVotePool.txs.PushBack(memTx)
-	txVotePool.txsMap.Store(txVoteKey(memTx.tx), e)
-	atomic.AddInt64(&txVotePool.txsBytes, int64(memTx.tx.Size()))
-	txVotePool.metrics.TxSizeBytes.Observe(float64(memTx.tx.Size()))
+	txVotePool.txsMap.Store(txVoteKey(memTx.Tx), e)
+	atomic.AddInt64(&txVotePool.txsBytes, int64(memTx.Tx.Size()))
+	txVotePool.metrics.TxSizeBytes.Observe(float64(memTx.Tx.Size()))
 }
 
 // Called from:
@@ -317,8 +317,8 @@ func (txVotePool *TxVotePool) ReapMaxTxs(max int) []types.TxVote {
 
 	txs := make([]types.TxVote, 0, cmn.MinInt(txVotePool.txs.Len(), max))
 	for e := txVotePool.txs.Front(); e != nil && len(txs) <= max; e = e.Next() {
-		memTx := e.Value.(*mempoolTxVote)
-		txs = append(txs, memTx.tx)
+		memTx := e.Value.(*MempoolTxVote)
+		txs = append(txs, memTx.Tx)
 	}
 	return txs
 }
@@ -358,15 +358,15 @@ func (txVotePool *TxVotePool) removeTxs(txs []types.TxVote) []types.TxVote {
 
 	txsLeft := make([]types.TxVote, 0, txVotePool.txs.Len())
 	for e := txVotePool.txs.Front(); e != nil; e = e.Next() {
-		memTx := e.Value.(*mempoolTxVote)
+		memTx := e.Value.(*MempoolTxVote)
 		// Remove the tx if it's already in a block.
-		if _, ok := txsMap[TxVoteID(memTx.tx)]; ok {
+		if _, ok := txsMap[TxVoteID(memTx.Tx)]; ok {
 			// NOTE: we don't remove committed txs from the cache.
-			txVotePool.removeTx(memTx.tx, e, false)
+			txVotePool.removeTx(memTx.Tx, e, false)
 
 			continue
 		}
-		txsLeft = append(txsLeft, memTx.tx)
+		txsLeft = append(txsLeft, memTx.Tx)
 	}
 	return txsLeft
 }
@@ -374,17 +374,17 @@ func (txVotePool *TxVotePool) removeTxs(txs []types.TxVote) []types.TxVote {
 //--------------------------------------------------------------------------------
 
 // mempoolTxVote is a transaction that successfully ran
-type mempoolTxVote struct {
+type MempoolTxVote struct {
 	height int64        // height that this tx had been validated in
-	tx     types.TxVote //
+	Tx     types.TxVote //
 
 	// ids of peers who've sent us this tx (as a map for quick lookups).
 	// senders: PeerID -> bool
-	senders sync.Map
+	Senders sync.Map
 }
 
 // Height returns the height for this transaction
-func (memTxVote *mempoolTxVote) Height() int64 {
+func (memTxVote *MempoolTxVote) Height() int64 {
 	return atomic.LoadInt64(&memTxVote.height)
 }
 
