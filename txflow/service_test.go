@@ -30,12 +30,12 @@ import (
 //----------------------------------------------
 // in-process testnets
 
-func startConsensusNet(t *testing.T, css []*ConsensusState, N int) (
-	[]*ConsensusReactor,
+func startConsensusNet(t *testing.T, css []*TxFlowState, N int) (
+	[]*TxFlowReactor,
 	[]types.Subscription,
 	[]*types.EventBus,
 ) {
-	reactors := make([]*ConsensusReactor, N)
+	reactors := make([]*TxFlowReactor, N)
 	blocksSubs := make([]types.Subscription, 0)
 	eventBuses := make([]*types.EventBus, N)
 	for i := 0; i < N; i++ {
