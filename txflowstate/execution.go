@@ -174,7 +174,7 @@ func execTxOnProxyApp(
 	}
 	proxyAppConn.SetResponseCallback(proxyCb)
 
-	proxyAppConn.DeliverTxAsync(abci.RequestDeliverTx{Tx: tx})
+	proxyAppConn.DeliverTxAsync(tx)
 	if err := proxyAppConn.Error(); err != nil {
 		return nil, err
 	}

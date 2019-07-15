@@ -32,12 +32,14 @@ require (
 	github.com/spf13/jwalterweatherman v1.1.0 // indirect
 	github.com/spf13/viper v1.0.3 // indirect
 	github.com/stretchr/testify v1.3.0
+	github.com/syndtr/goleveldb v1.0.0 // indirect
 	github.com/tendermint/btcd v0.1.1 // indirect
 	github.com/tendermint/go-amino v0.15.0
 	github.com/tendermint/iavl v0.12.1 // indirect
-	github.com/tendermint/tendermint v0.31.2-0.20190713060927-78e634dd5c5a
+	github.com/tendermint/tendermint v0.31.7
 	github.com/ugorji/go/codec v1.1.5-pre
 	golang.org/x/net v0.0.0-20190611141213-3f473d35a33a // indirect
+	google.golang.org/genproto v0.0.0-20180831171423-11092d34479b // indirect
 	google.golang.org/grpc v1.21.1 // indirect
 	gopkg.in/yaml.v2 v2.2.2 // indirect
 )
