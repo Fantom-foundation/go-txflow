@@ -7,6 +7,22 @@ Or [Blockchain](https://en.wikipedia.org/wiki/Blockchain_(database)), for short.
 TxFlow Core is asynchronous Byzantine Fault Tolerant (aBFT) middleware that takes a state transition machine - written in any programming language -
 and securely replicates it on many machines.
 
+TxFlow is designed for responsiveness. Instead of blocks, transactions are confirmed in realtime asynchronously. When a transaction is received, validators sign and create a TxVote. These are again asynchronously broadcasted out. There are no view changes.
+
+The process flow is as follows
+
+- Transaction payload received via client RPC
+  - Transactions are broadcast via p2p (no synchrony)
+- Validator signs transaction 
+  - Voted Transactions are broadcast via p2p (no synchrony)
+- When 2n/3 stake from votes are collected the transaction is committed to the state
+
+The above allows for transactional responsiveness
+
+Blocks are still produced as a ticker to allow for a time based ordering (similar to BFT lamport timestamps)
+
+Transactions potentially not confirmed within a block proposal are included in the block proposal to allow a fallback for responsiveness
+
 ## Releases
 
 NOTE: The master branch is now an active development branch (starting with `v0.1.0`). Please, do not depend on it and
