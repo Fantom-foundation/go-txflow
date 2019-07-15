@@ -54,6 +54,15 @@ func (voteSet *TxVoteSet) ChainID() string {
 	return voteSet.chainID
 }
 
+func (voteSet *TxVoteSet) GetVotes() []TxVote {
+	// Convert map to slice of values.
+	values := []TxVote{}
+	for _, value := range voteSet.votes {
+		values = append(values, *value)
+	}
+	return values
+}
+
 func (voteSet *TxVoteSet) Height() int64 {
 	if voteSet == nil {
 		return 0

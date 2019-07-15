@@ -108,24 +108,25 @@ func (txR *Reactor) signTxRoutine() {
 
 		memTx := next.Value.(*mempool.MempoolTx)
 
-		//Sign this transaction with private validator and save TxVote in TxVotePool
-		//Don't supress the error here, this needs work
+		//We keep the routine running since we could turn into a validator at any round
+		if _, val := txR.state.Validators.GetByAddress(txR.privVal.GetPubKey().Address()); val != nil {
+			//Only sign if I'm a validator
+			txVote := types.NewTxVote(
+				txR.state.LastBlockHeight,
+				types.TxHash(memTx.Tx),
+				types.TxKey(memTx.Tx),
+				txR.privVal.GetPubKey().Address(),
+			)
+			err := txR.privVal.SignTxVote(txR.state.ChainID, &txVote)
+			if err != nil {
+				//panic error here
+			}
+			//This could fail, need another mechanism to run through missing transactions
+			//Should have a 1:1 parity
+			//Tx is signed at this point, and propagated outwards
+			txR.txVotePool.CheckTx(txVote)
 
-		//Only sign if I'm a validator
-		txVote := types.NewTxVote(
-			txR.state.LastBlockHeight,
-			types.TxHash(memTx.Tx),
-			types.TxKey(memTx.Tx),
-			txR.privVal.GetPubKey().Address(),
-		)
-		err := txR.privVal.SignTxVote(txR.state.ChainID, &txVote)
-		if err != nil {
-			//panic error here
 		}
-		//This could fail, need another mechanism to run through missing transactions
-		//Should have a 1:1 parity
-		//Tx is signed at this point, and propagated outwards
-		txR.txVotePool.CheckTx(txVote)
 
 		select {
 		case <-next.NextWaitChan():

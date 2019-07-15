@@ -326,20 +326,29 @@ func (txVotePool *TxVotePool) ReapMaxTxs(max int) []types.TxVote {
 // Update informs the mempool that the given txs were committed and can be discarded.
 // NOTE: this should be called *after* block is committed by consensus.
 // NOTE: unsafe; Lock/Unlock must be managed by caller
-func (txVotePool *TxVotePool) Update(txs []types.TxVote) error {
+func (txVotePool *TxVotePool) Update(
+	height int64,
+	txs []types.TxVote,
+) error {
+
+	// Set Height
+	txVotePool.height = height
 	txVotePool.notifiedTxsAvailable = false
 
 	// Add committed transactions to cache (if missing).
 	for _, tx := range txs {
 		_ = txVotePool.cache.Push(tx)
+		if e, ok := txVotePool.txsMap.Load(txVoteKey(tx)); ok {
+			txVotePool.removeTx(tx, e.(*clist.CElement), false)
+		}
 	}
 
 	// Remove committed transactions.
-	txsLeft := txVotePool.removeTxs(txs)
+	//txsLeft := txVotePool.removeTxs(txs)
 
 	// Either recheck non-committed txs to see if they became invalid
 	// or just notify there're some txs left.
-	if len(txsLeft) > 0 {
+	if txVotePool.Size() > 0 {
 		txVotePool.notifyTxsAvailable()
 	}
 
@@ -347,28 +356,6 @@ func (txVotePool *TxVotePool) Update(txs []types.TxVote) error {
 	txVotePool.metrics.Size.Set(float64(txVotePool.Size()))
 
 	return nil
-}
-
-func (txVotePool *TxVotePool) removeTxs(txs []types.TxVote) []types.TxVote {
-	// Build a map for faster lookups.
-	txsMap := make(map[string]struct{}, len(txs))
-	for _, tx := range txs {
-		txsMap[TxVoteID(tx)] = struct{}{}
-	}
-
-	txsLeft := make([]types.TxVote, 0, txVotePool.txs.Len())
-	for e := txVotePool.txs.Front(); e != nil; e = e.Next() {
-		memTx := e.Value.(*MempoolTxVote)
-		// Remove the tx if it's already in a block.
-		if _, ok := txsMap[TxVoteID(memTx.Tx)]; ok {
-			// NOTE: we don't remove committed txs from the cache.
-			txVotePool.removeTx(memTx.Tx, e, false)
-
-			continue
-		}
-		txsLeft = append(txsLeft, memTx.Tx)
-	}
-	return txsLeft
 }
 
 //--------------------------------------------------------------------------------
