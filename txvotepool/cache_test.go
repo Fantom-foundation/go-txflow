@@ -34,7 +34,7 @@ func TestCacheRemove(t *testing.T) {
 func TestCacheAfterUpdate(t *testing.T) {
 	app := kvstore.NewKVStoreApplication()
 	cc := proxy.NewLocalClientCreator(app)
-	mempool, cleanup := newMempoolWithApp(cc)
+	txvotepool, _, cleanup := newMempoolWithApp(cc)
 	defer cleanup()
 
 	// reAddIndices & txsInCache can have elements > numTxsToCreate
@@ -54,7 +54,7 @@ func TestCacheAfterUpdate(t *testing.T) {
 	for tcIndex, tc := range tests {
 		for i := 0; i < tc.numTxsToCreate; i++ {
 			tx := types.TxVote{int64(i), types.TxHash([]byte("0x1")), types.TxKey([]byte("0x1")), time.Now(), nil, nil}
-			err := mempool.CheckTx(tx)
+			err := txvotepool.CheckTx(tx)
 			require.NoError(t, err)
 		}
 
@@ -63,14 +63,14 @@ func TestCacheAfterUpdate(t *testing.T) {
 			tx := types.TxVote{int64(v), types.TxHash([]byte("0x1")), types.TxKey([]byte("0x1")), time.Now(), nil, nil}
 			updateTxs = append(updateTxs, tx)
 		}
-		mempool.Update(updateTxs)
+		txvotepool.Update(1, updateTxs)
 
 		for _, v := range tc.reAddIndices {
 			tx := types.TxVote{int64(v), types.TxHash([]byte("0x1")), types.TxKey([]byte("0x1")), time.Now(), nil, nil}
-			_ = mempool.CheckTx(tx)
+			_ = txvotepool.CheckTx(tx)
 		}
 
-		cache := mempool.cache.(*mapTxCache)
+		cache := txvotepool.cache.(*mapTxCache)
 		node := cache.list.Front()
 		counter := 0
 		for node != nil {
@@ -93,6 +93,6 @@ func TestCacheAfterUpdate(t *testing.T) {
 		}
 		require.Equal(t, len(tc.txsInCache), counter,
 			"cache smaller than expected on testcase %d", tcIndex)
-		mempool.Flush()
+		txvotepool.Flush()
 	}
 }

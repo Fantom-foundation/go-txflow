@@ -50,10 +50,10 @@ func makeAndConnectMempoolReactors(config *cfg.Config, N int) []*Reactor {
 	for i := 0; i < N; i++ {
 		app := kvstore.NewKVStoreApplication()
 		cc := proxy.NewLocalClientCreator(app)
-		mempool, cleanup := newMempoolWithApp(cc)
+		txvotepool, mempool, cleanup := newMempoolWithApp(cc)
 		defer cleanup()
 
-		reactors[i] = NewReactor(config.Mempool, mempool) // so we dont start the consensus states
+		reactors[i] = NewReactor(config.Mempool, mempool, txvotepool, nil, nil) // so we dont start the consensus states
 		reactors[i].SetLogger(logger.With("validator", i))
 	}
 
@@ -91,7 +91,7 @@ func waitForTxs(t *testing.T, txs []types.TxVote, reactors []*Reactor) {
 // wait for all txs on a single mempool
 func _waitForTxs(t *testing.T, wg *sync.WaitGroup, txs []types.TxVote, reactorIdx int, reactors []*Reactor) {
 
-	mempool := reactors[reactorIdx].TxVotePool
+	mempool := reactors[reactorIdx].txVotePool
 	for mempool.Size() != len(txs) {
 		time.Sleep(time.Millisecond * 100)
 	}
@@ -106,7 +106,7 @@ func _waitForTxs(t *testing.T, wg *sync.WaitGroup, txs []types.TxVote, reactorId
 // ensure no txs on reactor after some timeout
 func ensureNoTxs(t *testing.T, reactor *Reactor, timeout time.Duration) {
 	time.Sleep(timeout) // wait for the txs in all mempools
-	assert.Zero(t, reactor.TxVotePool.Size())
+	assert.Zero(t, reactor.txVotePool.Size())
 }
 
 const (
@@ -131,7 +131,7 @@ func TestReactorBroadcastTxMessage(t *testing.T) {
 
 	// send a bunch of txs to the first reactor's mempool
 	// and wait for them all to be received in the others
-	txs := checkTxs(t, reactors[0].TxVotePool, NUM_TXS, UnknownPeerID)
+	txs := checkTxs(t, reactors[0].txVotePool, NUM_TXS, UnknownPeerID)
 	waitForTxs(t, txs, reactors)
 }
 
@@ -147,7 +147,7 @@ func TestReactorNoBroadcastToSender(t *testing.T) {
 
 	// send a bunch of txs to the first reactor's mempool, claiming it came from peer
 	// ensure peer gets no txs
-	checkTxs(t, reactors[0].TxVotePool, NUM_TXS, 1)
+	checkTxs(t, reactors[0].txVotePool, NUM_TXS, 1)
 	ensureNoTxs(t, reactors[1], 100*time.Millisecond)
 }
 
@@ -194,7 +194,7 @@ func TestBroadcastTxForPeerStopsWhenReactorStops(t *testing.T) {
 }
 
 func TestMempoolIDsBasic(t *testing.T) {
-	ids := newMempoolIDs()
+	ids := newTxVotePoolIDs()
 
 	peer := mock.NewPeer(net.IP{127, 0, 0, 1})
 
@@ -213,7 +213,7 @@ func TestMempoolIDsPanicsIfNodeRequestsOvermaxActiveIDs(t *testing.T) {
 	}
 
 	// 0 is already reserved for UnknownPeerID
-	ids := newMempoolIDs()
+	ids := newTxVotePoolIDs()
 
 	for i := 0; i < maxActiveIDs-1; i++ {
 		peer := mock.NewPeer(net.IP{127, 0, 0, 1})

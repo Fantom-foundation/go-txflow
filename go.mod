@@ -36,8 +36,7 @@ require (
 	github.com/tendermint/go-amino v0.15.0
 	github.com/tendermint/iavl v0.12.1 // indirect
 	github.com/tendermint/tendermint v0.32.1
+	github.com/tendermint/tm-cmn v0.0.0-20190716080004-dfcde30d5acb
 	github.com/ugorji/go/codec v1.1.5-pre
-	golang.org/x/net v0.0.0-20190611141213-3f473d35a33a // indirect
-	google.golang.org/grpc v1.21.1 // indirect
 	gopkg.in/yaml.v2 v2.2.2 // indirect
 )

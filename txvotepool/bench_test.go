@@ -12,13 +12,13 @@ import (
 func BenchmarkReap(b *testing.B) {
 	app := kvstore.NewKVStoreApplication()
 	cc := proxy.NewLocalClientCreator(app)
-	mempool, cleanup := newMempoolWithApp(cc)
+	txvotepool, _, cleanup := newMempoolWithApp(cc)
 	defer cleanup()
 
 	size := 10000
 	for i := 0; i < size; i++ {
 		tx := types.TxVote{int64(i), types.TxHash([]byte("0x1")), types.TxKey([]byte("0x1")), time.Now(), nil, nil}
-		mempool.CheckTx(tx)
+		txvotepool.CheckTx(tx)
 	}
 	b.ResetTimer()
 }
@@ -26,12 +26,12 @@ func BenchmarkReap(b *testing.B) {
 func BenchmarkCheckTx(b *testing.B) {
 	app := kvstore.NewKVStoreApplication()
 	cc := proxy.NewLocalClientCreator(app)
-	mempool, cleanup := newMempoolWithApp(cc)
+	txvotepool, _, cleanup := newMempoolWithApp(cc)
 	defer cleanup()
 
 	for i := 0; i < b.N; i++ {
 		tx := types.TxVote{int64(i), types.TxHash([]byte("0x1")), types.TxKey([]byte("0x1")), time.Now(), nil, nil}
-		mempool.CheckTx(tx)
+		txvotepool.CheckTx(tx)
 	}
 }
 

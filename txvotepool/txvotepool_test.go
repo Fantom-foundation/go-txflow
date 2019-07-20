@@ -14,34 +14,37 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/Fantom-foundation/go-txflow/mempool"
 	"github.com/Fantom-foundation/go-txflow/types"
 	"github.com/tendermint/tendermint/abci/example/counter"
 	"github.com/tendermint/tendermint/abci/example/kvstore"
 	abci "github.com/tendermint/tendermint/abci/types"
 	cfg "github.com/tendermint/tendermint/config"
 	"github.com/tendermint/tendermint/libs/log"
-	"github.com/tendermint/tendermint/mempool"
+	tmempool "github.com/tendermint/tendermint/mempool"
 	"github.com/tendermint/tendermint/proxy"
+	ttypes "github.com/tendermint/tendermint/types"
 )
 
 // A cleanupFunc cleans up any config / test files created for a particular
 // test.
 type cleanupFunc func()
 
-func newMempoolWithApp(cc proxy.ClientCreator) (*TxVotePool, cleanupFunc) {
+func newMempoolWithApp(cc proxy.ClientCreator) (*TxVotePool, *mempool.CListMempool, cleanupFunc) {
 	return newMempoolWithAppAndConfig(cc, cfg.ResetTestRoot("mempool_test"))
 }
 
-func newMempoolWithAppAndConfig(cc proxy.ClientCreator, config *cfg.Config) (*TxVotePool, cleanupFunc) {
+func newMempoolWithAppAndConfig(cc proxy.ClientCreator, config *cfg.Config) (*TxVotePool, *mempool.CListMempool, cleanupFunc) {
 	appConnMem, _ := cc.NewABCIClient()
 	appConnMem.SetLogger(log.TestingLogger().With("module", "abci-client", "connection", "mempool"))
 	err := appConnMem.Start()
 	if err != nil {
 		panic(err)
 	}
-	mempool := NewTxVotePool(config.Mempool, 0)
-	mempool.SetLogger(log.TestingLogger())
-	return mempool, func() { os.RemoveAll(config.RootDir) }
+	txvotepool := NewTxVotePool(config.Mempool, 0)
+	txvotepool.SetLogger(log.TestingLogger())
+	mempool := mempool.NewCListMempool(config.Mempool, appConnMem, 0)
+	return txvotepool, mempool, func() { os.RemoveAll(config.RootDir) }
 }
 
 func ensureNoFire(t *testing.T, ch <-chan struct{}, timeoutMS int) {
@@ -64,11 +67,12 @@ func ensureFire(t *testing.T, ch <-chan struct{}, timeoutMS int) {
 
 func checkTxs(t *testing.T, txvotepool *TxVotePool, count int, peerID uint16) []types.TxVote {
 	txs := make([]types.TxVote, count)
-	txInfo := mempool.TxInfo{SenderID: peerID}
+	txInfo := tmempool.TxInfo{SenderID: peerID}
 	for i := 0; i < count; i++ {
 		txBytes := make([]byte, 20)
+		tx := ttypes.Tx(txBytes)
 		_, err := rand.Read(txBytes)
-		txs[i] = types.TxVote{int64(i), txBytes, time.Now(), nil, nil}
+		txs[i] = types.TxVote{int64(i), types.TxHash(tx), types.TxKey(tx), time.Now(), nil, nil}
 		if err != nil {
 			t.Error(err)
 		}
@@ -88,15 +92,15 @@ func checkTxs(t *testing.T, txvotepool *TxVotePool, count int, peerID uint16) []
 func TestReapMaxBytesMaxGas(t *testing.T) {
 	app := kvstore.NewKVStoreApplication()
 	cc := proxy.NewLocalClientCreator(app)
-	mempool, cleanup := newMempoolWithApp(cc)
+	txvotepool, _, cleanup := newMempoolWithApp(cc)
 	defer cleanup()
 
 	// Ensure gas calculation behaves as expected
-	checkTxs(t, mempool, 1, UnknownPeerID)
-	tx0 := mempool.TxsFront().Value.(*MempoolTxVote)
+	checkTxs(t, txvotepool, 1, UnknownPeerID)
+	tx0 := txvotepool.TxsFront().Value.(*MempoolTxVote)
 	// ensure each tx is 20 bytes long
 	require.Equal(t, tx0.Tx.Size(), 20, "Tx is longer than 20 bytes")
-	mempool.Flush()
+	txvotepool.Flush()
 
 	// each table driven test creates numTxsToCreate txs with checkTx, and at the end clears all remaining txs.
 	// each tx has 20 bytes + amino overhead = 21 bytes, 1 gas
@@ -106,9 +110,9 @@ func TestReapMaxBytesMaxGas(t *testing.T) {
 func TestMempoolUpdateAddsTxsToCache(t *testing.T) {
 	app := kvstore.NewKVStoreApplication()
 	cc := proxy.NewLocalClientCreator(app)
-	txvotepool, cleanup := newMempoolWithApp(cc)
+	txvotepool, _, cleanup := newMempoolWithApp(cc)
 	defer cleanup()
-	txvotepool.Update([]types.TxVote{{}})
+	txvotepool.Update(0, []types.TxVote{{}})
 	err := txvotepool.CheckTx(types.TxVote{})
 	if assert.Error(t, err) {
 		assert.Equal(t, mempool.ErrTxInCache, err)
@@ -118,45 +122,45 @@ func TestMempoolUpdateAddsTxsToCache(t *testing.T) {
 func TestTxsAvailable(t *testing.T) {
 	app := kvstore.NewKVStoreApplication()
 	cc := proxy.NewLocalClientCreator(app)
-	mempool, cleanup := newMempoolWithApp(cc)
+	txvotepool, _, cleanup := newMempoolWithApp(cc)
 	defer cleanup()
-	mempool.EnableTxsAvailable()
+	txvotepool.EnableTxsAvailable()
 
 	timeoutMS := 500
 
 	// with no txs, it shouldnt fire
-	ensureNoFire(t, mempool.TxsAvailable(), timeoutMS)
+	ensureNoFire(t, txvotepool.TxsAvailable(), timeoutMS)
 
 	// send a bunch of txs, it should only fire once
-	txs := checkTxs(t, mempool, 100, UnknownPeerID)
-	ensureFire(t, mempool.TxsAvailable(), timeoutMS)
-	ensureNoFire(t, mempool.TxsAvailable(), timeoutMS)
+	txs := checkTxs(t, txvotepool, 100, UnknownPeerID)
+	ensureFire(t, txvotepool.TxsAvailable(), timeoutMS)
+	ensureNoFire(t, txvotepool.TxsAvailable(), timeoutMS)
 
 	// call update with half the txs.
 	// it should fire once now for the new height
 	// since there are still txs left
 	committedTxs, txs := txs[:50], txs[50:]
-	if err := mempool.Update(committedTxs); err != nil {
+	if err := txvotepool.Update(1, committedTxs); err != nil {
 		t.Error(err)
 	}
-	ensureFire(t, mempool.TxsAvailable(), timeoutMS)
-	ensureNoFire(t, mempool.TxsAvailable(), timeoutMS)
+	ensureFire(t, txvotepool.TxsAvailable(), timeoutMS)
+	ensureNoFire(t, txvotepool.TxsAvailable(), timeoutMS)
 
 	// send a bunch more txs. we already fired for this height so it shouldnt fire again
-	moreTxs := checkTxs(t, mempool, 50, UnknownPeerID)
-	ensureNoFire(t, mempool.TxsAvailable(), timeoutMS)
+	moreTxs := checkTxs(t, txvotepool, 50, UnknownPeerID)
+	ensureNoFire(t, txvotepool.TxsAvailable(), timeoutMS)
 
 	// now call update with all the txs. it should not fire as there are no txs left
 	committedTxs = append(txs, moreTxs...)
-	if err := mempool.Update(committedTxs); err != nil {
+	if err := txvotepool.Update(2, committedTxs); err != nil {
 		t.Error(err)
 	}
-	ensureNoFire(t, mempool.TxsAvailable(), timeoutMS)
+	ensureNoFire(t, txvotepool.TxsAvailable(), timeoutMS)
 
 	// send a bunch more txs, it should only fire once
-	checkTxs(t, mempool, 100, UnknownPeerID)
-	ensureFire(t, mempool.TxsAvailable(), timeoutMS)
-	ensureNoFire(t, mempool.TxsAvailable(), timeoutMS)
+	checkTxs(t, txvotepool, 100, UnknownPeerID)
+	ensureFire(t, txvotepool.TxsAvailable(), timeoutMS)
+	ensureNoFire(t, txvotepool.TxsAvailable(), timeoutMS)
 }
 
 func TestSerialReap(t *testing.T) {
@@ -164,7 +168,7 @@ func TestSerialReap(t *testing.T) {
 	app.SetOption(abci.RequestSetOption{Key: "serial", Value: "on"})
 	cc := proxy.NewLocalClientCreator(app)
 
-	mempool, cleanup := newMempoolWithApp(cc)
+	txvotepool, _, cleanup := newMempoolWithApp(cc)
 	defer cleanup()
 
 	appConnCon, _ := cc.NewABCIClient()
@@ -176,10 +180,10 @@ func TestSerialReap(t *testing.T) {
 	deliverTxsRange := func(start, end int) {
 		// Deliver some txs.
 		for i := start; i < end; i++ {
-
+			tx := ttypes.Tx(string(i))
 			// This will succeed
-			txVote := types.TxVote{int64(i), nil, time.Now(), nil, nil}
-			err := mempool.CheckTx(txVote)
+			txVote := types.TxVote{int64(i), types.TxHash(tx), types.TxKey(tx), time.Now(), nil, nil}
+			err := txvotepool.CheckTx(txVote)
 			_, cached := cacheMap[TxVoteID(txVote)]
 			if cached {
 				require.NotNil(t, err, "expected error for cached tx")
@@ -189,7 +193,7 @@ func TestSerialReap(t *testing.T) {
 			cacheMap[string(TxVoteID(txVote))] = struct{}{}
 
 			// Duplicates are cached and should return error
-			err = mempool.CheckTx(txVote)
+			err = txvotepool.CheckTx(txVote)
 			require.NotNil(t, err, "Expected error after CheckTx on duplicated tx")
 		}
 	}
@@ -197,10 +201,11 @@ func TestSerialReap(t *testing.T) {
 	updateRange := func(start, end int) {
 		txs := make([]types.TxVote, 0)
 		for i := start; i < end; i++ {
-			txVote := types.TxVote{int64(i), nil, time.Now(), nil, nil}
+			tx := ttypes.Tx(string(i))
+			txVote := types.TxVote{int64(i), types.TxHash(tx), types.TxKey(tx), time.Now(), nil, nil}
 			txs = append(txs, txVote)
 		}
-		if err := mempool.Update(txs); err != nil {
+		if err := txvotepool.Update(3, txs); err != nil {
 			t.Error(err)
 		}
 	}
@@ -210,7 +215,7 @@ func TestSerialReap(t *testing.T) {
 		for i := start; i < end; i++ {
 			txBytes := make([]byte, 8)
 			binary.BigEndian.PutUint64(txBytes, uint64(i))
-			res, err := appConnCon.DeliverTxSync(txBytes)
+			res, err := appConnCon.DeliverTxSync(abci.RequestDeliverTx{Tx: txBytes})
 			if err != nil {
 				t.Errorf("Client error committing tx: %v", err)
 			}
@@ -260,8 +265,8 @@ func TestMempoolCloseWAL(t *testing.T) {
 	wcfg := cfg.DefaultMempoolConfig()
 	wcfg.RootDir = rootDir
 	defer os.RemoveAll(wcfg.RootDir)
-	mempool := NewTxVotePool(wcfg, 10)
-	mempool.InitWAL()
+	txvotepool := NewTxVotePool(wcfg, 10)
+	txvotepool.InitWAL()
 
 	// 4. Ensure that the directory contains the WAL file
 	m2, err := filepath.Glob(filepath.Join(rootDir, "*"))
@@ -269,8 +274,9 @@ func TestMempoolCloseWAL(t *testing.T) {
 	require.Equal(t, 1, len(m2), "expecting the wal match in")
 
 	// 5. Write some contents to the WAL
-	mempool.CheckTx(types.TxVote{int64(1), nil, time.Now(), nil, nil})
-	walFilepath := mempool.wal.Path
+	tx := ttypes.Tx(string(1))
+	txvotepool.CheckTx(types.TxVote{int64(1), types.TxHash(tx), types.TxKey(tx), time.Now(), nil, nil})
+	walFilepath := txvotepool.wal.Path
 	sum1 := checksumFile(walFilepath, t)
 
 	// 6. Sanity check to ensure that the written TX matches the expectation.
@@ -278,8 +284,8 @@ func TestMempoolCloseWAL(t *testing.T) {
 
 	// 7. Invoke CloseWAL() and ensure it discards the
 	// WAL thus any other write won't go through.
-	mempool.CloseWAL()
-	mempool.CheckTx(types.TxVote{int64(1), nil, time.Now(), nil, nil})
+	txvotepool.CloseWAL()
+	txvotepool.CheckTx(types.TxVote{int64(1), types.TxHash(tx), types.TxKey(tx), time.Now(), nil, nil})
 	sum2 := checksumFile(walFilepath, t)
 	require.Equal(t, sum1, sum2, "expected no change to the WAL after invoking CloseWAL() since it was discarded")
 
@@ -299,7 +305,7 @@ func txMessageSize(tx types.TxVote) int {
 func TestMempoolMaxMsgSize(t *testing.T) {
 	app := kvstore.NewKVStoreApplication()
 	cc := proxy.NewLocalClientCreator(app)
-	mempl, cleanup := newMempoolWithApp(cc)
+	txvotepool, _, cleanup := newMempoolWithApp(cc)
 	defer cleanup()
 
 	testCases := []struct {
@@ -328,11 +334,12 @@ func TestMempoolMaxMsgSize(t *testing.T) {
 	for i, testCase := range testCases {
 		caseString := fmt.Sprintf("case %d, len %d", i, testCase.len)
 
-		tx := types.TxVote{int64(i), nil, time.Now(), nil, nil}
-		err := mempl.CheckTx(tx)
-		msg := &TxMessage{tx}
+		tx := ttypes.Tx(string(i))
+		txVote := types.TxVote{int64(i), types.TxHash(tx), types.TxKey(tx), time.Now(), nil, nil}
+		err := txvotepool.CheckTx(txVote)
+		msg := &TxVoteMessage{txVote}
 		encoded := cdc.MustMarshalBinaryBare(msg)
-		require.Equal(t, len(encoded), txMessageSize(tx), caseString)
+		require.Equal(t, len(encoded), txMessageSize(txVote), caseString)
 		if !testCase.err {
 			require.True(t, len(encoded) <= maxMsgSize, caseString)
 			require.NoError(t, err, caseString)
@@ -349,23 +356,25 @@ func TestMempoolTxsBytes(t *testing.T) {
 	cc := proxy.NewLocalClientCreator(app)
 	config := cfg.ResetTestRoot("mempool_test")
 	config.Mempool.MaxTxsBytes = 10
-	txvotepool, cleanup := newMempoolWithAppAndConfig(cc, config)
+	txvotepool, _, cleanup := newMempoolWithAppAndConfig(cc, config)
 	defer cleanup()
 
 	// 1. zero by default
 	assert.EqualValues(t, 0, txvotepool.TxsBytes())
 
 	// 2. len(tx) after CheckTx
-	err := txvotepool.CheckTx(types.TxVote{int64(1), nil, time.Now(), nil, nil})
+	tx := ttypes.Tx(string(1))
+	err := txvotepool.CheckTx(types.TxVote{int64(1), types.TxHash(tx), types.TxKey(tx), time.Now(), nil, nil})
 	require.NoError(t, err)
 	assert.EqualValues(t, 1, txvotepool.TxsBytes())
 
 	// 3. zero again after tx is removed by Update
-	txvotepool.Update([]types.TxVote{{int64(1), nil, time.Now(), nil, nil}})
+	txvotepool.Update(1, []types.TxVote{{int64(1), types.TxHash(tx), types.TxKey(tx), time.Now(), nil, nil}})
 	assert.EqualValues(t, 0, txvotepool.TxsBytes())
 
 	// 4. zero after Flush
-	err = txvotepool.CheckTx(types.TxVote{int64(2), nil, time.Now(), nil, nil})
+	tx = ttypes.Tx(string(2))
+	err = txvotepool.CheckTx(types.TxVote{int64(2), types.TxHash(tx), types.TxKey(tx), time.Now(), nil, nil})
 	require.NoError(t, err)
 	assert.EqualValues(t, 2, txvotepool.TxsBytes())
 
@@ -373,9 +382,11 @@ func TestMempoolTxsBytes(t *testing.T) {
 	assert.EqualValues(t, 0, txvotepool.TxsBytes())
 
 	// 5. ErrMempoolIsFull is returned when/if MaxTxsBytes limit is reached.
-	err = txvotepool.CheckTx(types.TxVote{int64(4), nil, time.Now(), nil, nil})
+	tx = ttypes.Tx(string(4))
+	err = txvotepool.CheckTx(types.TxVote{int64(4), types.TxHash(tx), types.TxKey(tx), time.Now(), nil, nil})
 	require.NoError(t, err)
-	err = txvotepool.CheckTx(types.TxVote{int64(5), nil, time.Now(), nil, nil})
+	tx = ttypes.Tx(string(5))
+	err = txvotepool.CheckTx(types.TxVote{int64(5), types.TxHash(tx), types.TxKey(tx), time.Now(), nil, nil})
 	if assert.Error(t, err) {
 		assert.IsType(t, mempool.ErrMempoolIsFull{}, err)
 	}
@@ -383,10 +394,11 @@ func TestMempoolTxsBytes(t *testing.T) {
 	// 6. zero after tx is rechecked and removed due to not being valid anymore
 	app2 := counter.NewCounterApplication(true)
 	cc = proxy.NewLocalClientCreator(app2)
-	txvotepool, cleanup = newMempoolWithApp(cc)
+	txvotepool, _, cleanup = newMempoolWithApp(cc)
 	defer cleanup()
 
-	err = txvotepool.CheckTx(types.TxVote{int64(0), nil, time.Now(), nil, nil})
+	tx = ttypes.Tx(string(0))
+	err = txvotepool.CheckTx(types.TxVote{int64(0), types.TxHash(tx), types.TxKey(tx), time.Now(), nil, nil})
 	require.NoError(t, err)
 	assert.EqualValues(t, 8, txvotepool.TxsBytes())
 
@@ -396,7 +408,7 @@ func TestMempoolTxsBytes(t *testing.T) {
 	require.Nil(t, err)
 
 	// Pretend like we committed nothing so txBytes gets rechecked and removed.
-	txvotepool.Update([]types.TxVote{})
+	txvotepool.Update(0, []types.TxVote{})
 	assert.EqualValues(t, 0, txvotepool.TxsBytes())
 }
 
