@@ -99,7 +99,7 @@ func TestReapMaxBytesMaxGas(t *testing.T) {
 	checkTxs(t, txvotepool, 1, UnknownPeerID)
 	tx0 := txvotepool.TxsFront().Value.(*MempoolTxVote)
 	// ensure each tx is 20 bytes long
-	require.Equal(t, tx0.Tx.Size(), 20, "Tx is longer than 20 bytes")
+	require.Equal(t, tx0.Tx.Size(), 114, "Tx is longer than 114 bytes")
 	txvotepool.Flush()
 
 	// each table driven test creates numTxsToCreate txs with checkTx, and at the end clears all remaining txs.
@@ -299,7 +299,7 @@ func TestMempoolCloseWAL(t *testing.T) {
 // encoded byte array, plus 1 for the struct field, plus 4
 // for the amino prefix.
 func txMessageSize(tx types.TxVote) int {
-	return tx.Size() + 1 + 4
+	return tx.Size() + 1 + 4 + 1
 }
 
 func TestMempoolMaxMsgSize(t *testing.T) {
@@ -335,7 +335,7 @@ func TestMempoolMaxMsgSize(t *testing.T) {
 		caseString := fmt.Sprintf("case %d, len %d", i, testCase.len)
 
 		tx := ttypes.Tx(string(i))
-		txVote := types.TxVote{int64(i), types.TxHash(tx), types.TxKey(tx), time.Now(), nil, nil}
+		txVote := types.TxVote{int64(i), types.TxHash(tx), types.TxKey(tx), time.Now(), nil, tx}
 		err := txvotepool.CheckTx(txVote)
 		msg := &TxVoteMessage{txVote}
 		encoded := cdc.MustMarshalBinaryBare(msg)

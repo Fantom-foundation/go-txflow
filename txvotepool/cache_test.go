@@ -10,6 +10,7 @@ import (
 	"github.com/Fantom-foundation/go-txflow/types"
 	"github.com/tendermint/tendermint/abci/example/kvstore"
 	"github.com/tendermint/tendermint/proxy"
+	ttypes "github.com/tendermint/tendermint/types"
 )
 
 func TestCacheRemove(t *testing.T) {
@@ -17,11 +18,12 @@ func TestCacheRemove(t *testing.T) {
 	numTxs := 10
 	txs := make([]types.TxVote, numTxs)
 	for i := 0; i < numTxs; i++ {
-		txs[i] = types.TxVote{int64(i), types.TxHash([]byte("0x1")), types.TxKey([]byte("0x1")), time.Now(), nil, nil}
+		tx := ttypes.Tx(string(i))
+		txs[i] = types.TxVote{int64(i), types.TxHash(tx), types.TxKey(tx), time.Now(), nil, tx}
 		cache.Push(txs[i])
 		// make sure its added to both the linked list and the map
-		require.Equal(t, i+1, len(cache.map_))
 		require.Equal(t, i+1, cache.list.Len())
+		require.Equal(t, i+1, len(cache.map_))
 	}
 	for i := 0; i < numTxs; i++ {
 		cache.Remove(txs[i])
@@ -53,20 +55,20 @@ func TestCacheAfterUpdate(t *testing.T) {
 	}
 	for tcIndex, tc := range tests {
 		for i := 0; i < tc.numTxsToCreate; i++ {
-			tx := types.TxVote{int64(i), types.TxHash([]byte("0x1")), types.TxKey([]byte("0x1")), time.Now(), nil, nil}
+			tx := types.TxVote{int64(i), types.TxHash([]byte("0x1")), types.TxKey([]byte("0x1")), time.Now(), nil, []byte("0x1")}
 			err := txvotepool.CheckTx(tx)
 			require.NoError(t, err)
 		}
 
 		updateTxs := []types.TxVote{}
 		for _, v := range tc.updateIndices {
-			tx := types.TxVote{int64(v), types.TxHash([]byte("0x1")), types.TxKey([]byte("0x1")), time.Now(), nil, nil}
+			tx := types.TxVote{int64(v), types.TxHash([]byte("0x1")), types.TxKey([]byte("0x1")), time.Now(), nil, []byte("0x1")}
 			updateTxs = append(updateTxs, tx)
 		}
 		txvotepool.Update(1, updateTxs)
 
 		for _, v := range tc.reAddIndices {
-			tx := types.TxVote{int64(v), types.TxHash([]byte("0x1")), types.TxKey([]byte("0x1")), time.Now(), nil, nil}
+			tx := types.TxVote{int64(v), types.TxHash([]byte("0x1")), types.TxKey([]byte("0x1")), time.Now(), nil, []byte("0x1")}
 			_ = txvotepool.CheckTx(tx)
 		}
 

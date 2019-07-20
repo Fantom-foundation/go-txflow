@@ -216,14 +216,14 @@ func (txR *TxFlow) addVote(vote *types.TxVote) (added bool, err error) {
 		tx := txR.mempl.GetTx(txR.TxVoteSets[txHash].TxKey)
 		txR.txExec.ApplyTx(txR.state, tx)
 
-		// Update mempool.
+		// Update txvotepool
+		// Remove votes from txvotepool
 		err = txR.txV.Update(
 			txR.state.LastBlockHeight,
 			txR.TxVoteSets[txHash].GetVotes(),
 		)
 
 		// Add vote to validated pool
-		// Remove votes from txvotepool
 	}
 	return
 }
