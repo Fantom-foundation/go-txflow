@@ -46,7 +46,7 @@ func RandValidator(randPower bool, minPower int64) (*types.Validator, PrivValida
 }
 
 // NOTE: privValidators are in order
-func randTxVoteSet(height int64, numValidators int, votingPower int64) (*TxVoteSet, *types.ValidatorSet, []PrivValidator) {
+func RandTxVoteSet(height int64, numValidators int, votingPower int64) (*TxVoteSet, *types.ValidatorSet, []PrivValidator) {
 	valSet, privValidators := RandValidatorSet(numValidators, votingPower)
 	tx := types.Tx{}
 	return NewTxVoteSet("test_chain_id", height, TxHash(tx), TxKey(tx), valSet), valSet, privValidators
@@ -83,7 +83,7 @@ func signAddVote(privVal PrivValidator, vote *TxVote, voteSet *TxVoteSet) (signe
 
 func TestAddVote(t *testing.T) {
 	height := int64(1)
-	voteSet, _, privValidators := randTxVoteSet(height, 10, 1)
+	voteSet, _, privValidators := RandTxVoteSet(height, 10, 1)
 	val0 := privValidators[0]
 
 	// t.Logf(">> %v", voteSet)
@@ -117,7 +117,7 @@ func TestAddVote(t *testing.T) {
 
 func Test2_3Majority(t *testing.T) {
 	height := int64(1)
-	voteSet, _, privValidators := randTxVoteSet(height, 10, 1)
+	voteSet, _, privValidators := RandTxVoteSet(height, 10, 1)
 
 	voteProto := &TxVote{
 		ValidatorAddress: nil, // NOTE: must fill in
@@ -167,7 +167,7 @@ func Test2_3Majority(t *testing.T) {
 
 func Test2_3MajorityRedux(t *testing.T) {
 	height := int64(1)
-	voteSet, _, privValidators := randTxVoteSet(height, 100, 1)
+	voteSet, _, privValidators := RandTxVoteSet(height, 100, 1)
 
 	voteProto := &TxVote{
 		ValidatorAddress: nil, // NOTE: must fill in
@@ -232,7 +232,7 @@ func Test2_3MajorityRedux(t *testing.T) {
 
 func TestBadVotes(t *testing.T) {
 	height := int64(1)
-	voteSet, _, privValidators := randTxVoteSet(height, 10, 1)
+	voteSet, _, privValidators := RandTxVoteSet(height, 10, 1)
 
 	voteProto := &TxVote{
 		ValidatorAddress: nil,
@@ -275,7 +275,7 @@ func TestBadVotes(t *testing.T) {
 
 func TestConflicts(t *testing.T) {
 	height := int64(1)
-	voteSet, _, privValidators := randTxVoteSet(height, 4, 1)
+	voteSet, _, privValidators := RandTxVoteSet(height, 4, 1)
 	blockHash1 := cmn.RandBytes(32)
 	blockHash2 := cmn.RandBytes(32)
 

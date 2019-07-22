@@ -224,6 +224,7 @@ func (txR *TxFlow) addVote(vote *types.TxVote) (added bool, err error) {
 		)
 
 		// Add vote to validated pool
+		// TxVoteSetPool.CheckTx(txR.TxVoteSets[txHash])
 	}
 	return
 }
