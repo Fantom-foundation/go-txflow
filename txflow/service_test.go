@@ -41,7 +41,7 @@ func TestTxVotes(t *testing.T) {
 	state.ConsensusParams.Block.MaxBytes = int64(maxBytes)
 
 	// Make Mempool
-	memplMetrics := tmempl.PrometheusMetrics("node_test_1")
+	memplMetrics := tmempl.PrometheusMetrics("node_test_mempool")
 	mempool := mempl.NewCListMempool(
 		config.Mempool,
 		proxyApp.Mempool(),
@@ -52,8 +52,20 @@ func TestTxVotes(t *testing.T) {
 	)
 	mempool.SetLogger(logger)
 
+	// Make Commitpool
+	commitMetrics := tmempl.PrometheusMetrics("node_test_commitpool")
+	commit := mempl.NewCListMempool(
+		config.Mempool,
+		proxyApp.Mempool(),
+		state.LastBlockHeight,
+		mempl.WithMetrics(commitMetrics),
+		mempl.WithPreCheck(sm.TxPreCheck(state)),
+		mempl.WithPostCheck(sm.TxPostCheck(state)),
+	)
+	commit.SetLogger(logger)
+
 	// Make TxVotePool
-	txvMetrics := tmempl.PrometheusMetrics("node_test_2")
+	txvMetrics := tmempl.PrometheusMetrics("node_test_txvotepool")
 	txVotePool := txvotepool.NewTxVotePool(
 		config.Mempool,
 		state.LastBlockHeight,
@@ -99,6 +111,7 @@ func TestTxVotes(t *testing.T) {
 		&state,
 		txVotePool,
 		mempool,
+		commit,
 		txExec,
 		txStore,
 		nil,

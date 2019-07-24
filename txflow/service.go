@@ -19,15 +19,16 @@ import (
 
 //-----------------------------------------------------------------------------
 
-// TxFlowReactor defines a reactor for the consensus service.
+// TxFlow defines a reactor for the consensus service.
 type TxFlow struct {
 	cmn.BaseService
 
 	StartTime  time.Time
 	TxVoteSets map[string]*types.TxVoteSet
 
-	txV   *txvotepool.TxVotePool
-	mempl *mempool.CListMempool
+	txV    *txvotepool.TxVotePool
+	mempl  *mempool.CListMempool
+	commit *mempool.CListMempool
 
 	// store txs and commits
 	txStore *tx.TxStore
@@ -49,12 +50,12 @@ type TxFlow struct {
 	metrics *Metrics
 }
 
-// NewTxFlowReactor returns a new TxFlowReactor with the given
-// txflowState.
+// NewTxFlow returns a new TxFlow service
 func NewTxFlow(
 	state *sm.State,
 	txV *txvotepool.TxVotePool,
 	mempl *mempool.CListMempool,
+	commit *mempool.CListMempool,
 	txExec *txflowstate.TxExecutor,
 	txStore *tx.TxStore,
 	evpool *evidence.EvidencePool,
@@ -66,6 +67,7 @@ func NewTxFlow(
 		state:      state,
 		evpool:     evpool,
 		mempl:      mempl,
+		commit:     commit,
 		TxVoteSets: make(map[string]*types.TxVoteSet),
 	}
 	txR.BaseService = *cmn.NewBaseService(nil, "TxFlow", txR)
@@ -77,6 +79,8 @@ func NewTxFlow(
 // broadcasted to other peers and starting state if we're not in fast sync.
 func (txR *TxFlow) OnStart() error {
 	txR.Logger.Info("TxFlowReactor OnStart()")
+
+	// Why do we check here and not onReceive in txvotepool?
 	go txR.checkMaj23Routine()
 
 	return nil
@@ -193,8 +197,7 @@ func (txR *TxFlow) addVote(vote *types.TxVote) (added bool, err error) {
 		"txKey", vote.TxKey,
 	)
 
-	txHash := string(vote.TxHash)
-	if _, ok := txR.TxVoteSets[txHash]; !ok {
+	if _, ok := txR.TxVoteSets[vote.TxHash]; !ok {
 		voteSet := types.NewTxVoteSet(
 			txR.state.ChainID,
 			txR.state.LastBlockHeight,
@@ -202,29 +205,30 @@ func (txR *TxFlow) addVote(vote *types.TxVote) (added bool, err error) {
 			vote.TxKey,
 			txR.state.Validators,
 		)
-		txR.TxVoteSets[txHash] = voteSet
+		txR.TxVoteSets[vote.TxHash] = voteSet
 	}
 
-	added, err = txR.TxVoteSets[txHash].AddVote(vote)
+	added, err = txR.TxVoteSets[vote.TxHash].AddVote(vote)
 	if !added {
 		// Either duplicate, or error upon cs.Votes.AddByIndex()
 		return
 	}
-	if txR.TxVoteSets[txHash].HasTwoThirdsMajority() {
+	if txR.TxVoteSets[vote.TxHash].HasTwoThirdsMajority() {
 		//enter commit
-		txR.txStore.SaveTx(txR.TxVoteSets[txHash])
-		tx := txR.mempl.GetTx(txR.TxVoteSets[txHash].TxKey)
+		txR.txStore.SaveTx(txR.TxVoteSets[vote.TxHash])
+		tx := txR.mempl.GetTx(txR.TxVoteSets[vote.TxHash].TxKey)
 		txR.txExec.ApplyTx(txR.state, tx)
 
 		// Update txvotepool
 		// Remove votes from txvotepool
 		err = txR.txV.Update(
 			txR.state.LastBlockHeight,
-			txR.TxVoteSets[txHash].GetVotes(),
+			txR.TxVoteSets[vote.TxHash].GetVotes(),
 		)
 
-		// Add vote to validated pool
-		// TxVoteSetPool.CheckTx(txR.TxVoteSets[txHash])
+		// Add transaction to commit pool to be added into validated block space for replay
+		// Commit can be found in txstore
+		txR.commit.CheckTx(tx, nil)
 	}
 	return
 }
