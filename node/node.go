@@ -16,8 +16,10 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rs/cors"
 
+	cs "github.com/Fantom-foundation/go-txflow/consensus"
 	mempl "github.com/Fantom-foundation/go-txflow/mempool"
 	"github.com/Fantom-foundation/go-txflow/privval"
+	sm "github.com/Fantom-foundation/go-txflow/state"
 	"github.com/Fantom-foundation/go-txflow/tx"
 	"github.com/Fantom-foundation/go-txflow/txflow"
 	"github.com/Fantom-foundation/go-txflow/txflowstate"
@@ -28,12 +30,9 @@ import (
 	"github.com/tendermint/tendermint/blockchain"
 	bc "github.com/tendermint/tendermint/blockchain"
 	cfg "github.com/tendermint/tendermint/config"
-	"github.com/tendermint/tendermint/consensus"
-	cs "github.com/tendermint/tendermint/consensus"
 	"github.com/tendermint/tendermint/crypto/ed25519"
 	"github.com/tendermint/tendermint/evidence"
 	cmn "github.com/tendermint/tendermint/libs/common"
-	dbm "github.com/tendermint/tendermint/libs/db"
 	"github.com/tendermint/tendermint/libs/log"
 	tmpubsub "github.com/tendermint/tendermint/libs/pubsub"
 	tmempl "github.com/tendermint/tendermint/mempool"
@@ -46,13 +45,13 @@ import (
 	ctypes "github.com/tendermint/tendermint/rpc/core/types"
 	grpccore "github.com/tendermint/tendermint/rpc/grpc"
 	rpcserver "github.com/tendermint/tendermint/rpc/lib/server"
-	sm "github.com/tendermint/tendermint/state"
 	"github.com/tendermint/tendermint/state/txindex"
 	"github.com/tendermint/tendermint/state/txindex/kv"
 	"github.com/tendermint/tendermint/state/txindex/null"
 	ttypes "github.com/tendermint/tendermint/types"
 	tmtime "github.com/tendermint/tendermint/types/time"
 	"github.com/tendermint/tendermint/version"
+	dbm "github.com/tendermint/tm-cmn/db"
 )
 
 // CustomReactorNamePrefix is a prefix for all custom reactors to prevent
@@ -130,6 +129,7 @@ type Node struct {
 	bcReactor      *bc.BlockchainReactor // for fast-syncing
 	mempoolReactor *mempl.Reactor        // for gossipping transactions
 	mempool        tmempl.Mempool
+	commitpool     tmempl.Mempool
 
 	//TxVotePool system for aBFT voting on mempool Tx's
 	txvotepoolReactor *txvotepool.Reactor
@@ -337,7 +337,7 @@ func createConsensusReactor(config *cfg.Config,
 	csMetrics *cs.Metrics,
 	fastSync bool,
 	eventBus *ttypes.EventBus,
-	consensusLogger log.Logger) (*consensus.ConsensusReactor, *consensus.ConsensusState) {
+	consensusLogger log.Logger) (*cs.ConsensusReactor, *cs.ConsensusState) {
 
 	consensusState := cs.NewConsensusState(
 		config.Consensus,
@@ -422,7 +422,7 @@ func createSwitch(config *cfg.Config,
 	peerFilters []p2p.PeerFilterFunc,
 	mempoolReactor *mempl.Reactor,
 	bcReactor *blockchain.BlockchainReactor,
-	consensusReactor *consensus.ConsensusReactor,
+	consensusReactor *cs.ConsensusReactor,
 	evidenceReactor *evidence.EvidenceReactor,
 	nodeInfo p2p.NodeInfo,
 	nodeKey *p2p.NodeKey,
