@@ -42,6 +42,10 @@ func MakeBlock(height int64, txs []types.Tx, vtxs []types.Tx, lastCommit *types.
 	return block
 }
 
+func (b *Block) GetTendermintBlock() *types.Block {
+	return types.MakeBlock(b.Height, b.Txs, b.LastCommit, b.Evidence.Evidence)
+}
+
 // ValidateBasic performs basic validation that doesn't involve state data.
 // It checks the internal consistency of the block.
 // Further validation is done using state#ValidateBlock.

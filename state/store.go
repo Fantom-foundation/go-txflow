@@ -6,7 +6,7 @@ import (
 	"github.com/Fantom-foundation/go-txflow/types"
 	abci "github.com/tendermint/tendermint/abci/types"
 	cmn "github.com/tendermint/tendermint/libs/common"
-	st "github.com/tendermint/tendermint/state"
+	sm "github.com/tendermint/tendermint/state"
 	ttypes "github.com/tendermint/tendermint/types"
 	dbm "github.com/tendermint/tm-cmn/db"
 )
@@ -40,7 +40,7 @@ func LoadStateFromDBOrGenesisFile(stateDB dbm.DB, genesisFilePath string) (State
 	state := LoadState(stateDB)
 	if state.IsEmpty() {
 		var err error
-		state, err = st.MakeGenesisStateFromFile(genesisFilePath)
+		state, err = MakeGenesisStateFromFile(genesisFilePath)
 		if err != nil {
 			return state, err
 		}
@@ -111,63 +111,55 @@ func saveState(db dbm.DB, state State, key []byte) {
 	db.SetSync(key, state.Bytes())
 }
 
-//------------------------------------------------------------------------
-
-// ABCIResponses retains the responses
-// of the various ABCI calls during block processing.
-// It is persisted to disk for each height before calling Commit.
-type ABCIResponses struct {
-	DeliverTx  []*abci.ResponseDeliverTx `json:"deliver_tx"`
-	EndBlock   *abci.ResponseEndBlock    `json:"end_block"`
-	BeginBlock *abci.ResponseBeginBlock  `json:"begin_block"`
-}
-
 // NewABCIResponses returns a new ABCIResponses
-func NewABCIResponses(block *types.Block) *ABCIResponses {
+func NewABCIResponses(block *types.Block) *sm.ABCIResponses {
 	resDeliverTxs := make([]*abci.ResponseDeliverTx, block.NumTxs)
 	if block.NumTxs == 0 {
 		// This makes Amino encoding/decoding consistent.
 		resDeliverTxs = nil
 	}
-	return &ABCIResponses{
+	return &sm.ABCIResponses{
 		DeliverTx: resDeliverTxs,
 	}
-}
-
-// Bytes serializes the ABCIResponse using go-amino.
-func (arz *ABCIResponses) Bytes() []byte {
-	return cdc.MustMarshalBinaryBare(arz)
-}
-
-func (arz *ABCIResponses) ResultsHash() []byte {
-	results := types.NewResults(arz.DeliverTx)
-	return results.Hash()
-}
-
-// LoadABCIResponses loads the ABCIResponses for the given height from the database.
-// This is useful for recovering from crashes where we called app.Commit and before we called
-// s.Save(). It can also be used to produce Merkle proofs of the result of txs.
-func LoadABCIResponses(db dbm.DB, height int64) (*ABCIResponses, error) {
-	buf := db.Get(calcABCIResponsesKey(height))
-	if len(buf) == 0 {
-		return nil, ErrNoABCIResponsesForHeight{height}
-	}
-
-	abciResponses := new(ABCIResponses)
-	err := cdc.UnmarshalBinaryBare(buf, abciResponses)
-	if err != nil {
-		// DATA HAS BEEN CORRUPTED OR THE SPEC HAS CHANGED
-		cmn.Exit(fmt.Sprintf(`LoadABCIResponses: Data has been corrupted or its spec has
-                changed: %v\n`, err))
-	}
-	// TODO: ensure that buf is completely read.
-
-	return abciResponses, nil
 }
 
 // SaveABCIResponses persists the ABCIResponses to the database.
 // This is useful in case we crash after app.Commit and before s.Save().
 // Responses are indexed by height so they can also be loaded later to produce Merkle proofs.
-func saveABCIResponses(db dbm.DB, height int64, abciResponses *ABCIResponses) {
+func saveABCIResponses(db dbm.DB, height int64, abciResponses *sm.ABCIResponses) {
 	db.SetSync(calcABCIResponsesKey(height), abciResponses.Bytes())
+}
+
+// saveValidatorsInfo persists the validator set.
+//
+// `height` is the effective height for which the validator is responsible for
+// signing. It should be called from s.Save(), right before the state itself is
+// persisted.
+func saveValidatorsInfo(db dbm.DB, height, lastHeightChanged int64, valSet *ttypes.ValidatorSet) {
+	if lastHeightChanged > height {
+		panic("LastHeightChanged cannot be greater than ValidatorsInfo height")
+	}
+	valInfo := &sm.ValidatorsInfo{
+		LastHeightChanged: lastHeightChanged,
+	}
+	// Only persist validator set if it was updated or checkpoint height (see
+	// valSetCheckpointInterval) is reached.
+	if height == lastHeightChanged || height%valSetCheckpointInterval == 0 {
+		valInfo.ValidatorSet = valSet
+	}
+	db.Set(calcValidatorsKey(height), valInfo.Bytes())
+}
+
+// saveConsensusParamsInfo persists the consensus params for the next block to disk.
+// It should be called from s.Save(), right before the state itself is persisted.
+// If the consensus params did not change after processing the latest block,
+// only the last height for which they changed is persisted.
+func saveConsensusParamsInfo(db dbm.DB, nextHeight, changeHeight int64, params ttypes.ConsensusParams) {
+	paramsInfo := &sm.ConsensusParamsInfo{
+		LastHeightChanged: changeHeight,
+	}
+	if changeHeight == nextHeight {
+		paramsInfo.ConsensusParams = params
+	}
+	db.Set(calcConsensusParamsKey(nextHeight), paramsInfo.Bytes())
 }

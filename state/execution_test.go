@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	sm "github.com/Fantom-foundation/go-txflow/state"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tendermint/tendermint/abci/example/kvstore"
@@ -14,8 +15,7 @@ import (
 	"github.com/tendermint/tendermint/libs/log"
 	"github.com/tendermint/tendermint/mock"
 	"github.com/tendermint/tendermint/proxy"
-	sm "github.com/tendermint/tendermint/state"
-	"github.com/tendermint/tendermint/types"
+	ttypes "github.com/tendermint/tendermint/types"
 	tmtime "github.com/tendermint/tendermint/types/time"
 )
 
@@ -35,10 +35,10 @@ func TestApplyBlock(t *testing.T) {
 	state, stateDB, _ := makeState(1, 1)
 
 	blockExec := sm.NewBlockExecutor(stateDB, log.TestingLogger(), proxyApp.Consensus(),
-		mock.Mempool{}, sm.MockEvidencePool{})
+		mock.Mempool{}, mock.Mempool{}, sm.MockEvidencePool{})
 
 	block := makeBlock(state, 1)
-	blockID := types.BlockID{Hash: block.Hash(), PartsHeader: block.MakePartSet(testPartSize).Header()}
+	blockID := ttypes.BlockID{Hash: block.Hash(), PartsHeader: block.MakePartSet(testPartSize).Header()}
 
 	//nolint:ineffassign
 	state, err = blockExec.ApplyBlock(state, blockID, block)
@@ -59,28 +59,28 @@ func TestBeginBlockValidators(t *testing.T) {
 	state, stateDB, _ := makeState(2, 2)
 
 	prevHash := state.LastBlockID.Hash
-	prevParts := types.PartSetHeader{}
-	prevBlockID := types.BlockID{Hash: prevHash, PartsHeader: prevParts}
+	prevParts := ttypes.PartSetHeader{}
+	prevBlockID := ttypes.BlockID{Hash: prevHash, PartsHeader: prevParts}
 
 	now := tmtime.Now()
-	commitSig0 := (&types.Vote{ValidatorIndex: 0, Timestamp: now, Type: types.PrecommitType}).CommitSig()
-	commitSig1 := (&types.Vote{ValidatorIndex: 1, Timestamp: now}).CommitSig()
+	commitSig0 := (&ttypes.Vote{ValidatorIndex: 0, Timestamp: now, Type: ttypes.PrecommitType}).CommitSig()
+	commitSig1 := (&ttypes.Vote{ValidatorIndex: 1, Timestamp: now}).CommitSig()
 
 	testCases := []struct {
 		desc                     string
-		lastCommitPrecommits     []*types.CommitSig
+		lastCommitPrecommits     []*ttypes.CommitSig
 		expectedAbsentValidators []int
 	}{
-		{"none absent", []*types.CommitSig{commitSig0, commitSig1}, []int{}},
-		{"one absent", []*types.CommitSig{commitSig0, nil}, []int{1}},
-		{"multiple absent", []*types.CommitSig{nil, nil}, []int{0, 1}},
+		{"none absent", []*ttypes.CommitSig{commitSig0, commitSig1}, []int{}},
+		{"one absent", []*ttypes.CommitSig{commitSig0, nil}, []int{1}},
+		{"multiple absent", []*ttypes.CommitSig{nil, nil}, []int{0, 1}},
 	}
 
 	for _, tc := range testCases {
-		lastCommit := types.NewCommit(prevBlockID, tc.lastCommitPrecommits)
+		lastCommit := ttypes.NewCommit(prevBlockID, tc.lastCommitPrecommits)
 
 		// block for height 2
-		block, _ := state.MakeBlock(2, makeTxs(2), lastCommit, nil, state.Validators.GetProposer().Address)
+		block, _ := state.MakeBlock(2, makeTxs(2), nil, lastCommit, nil, state.Validators.GetProposer().Address)
 
 		_, err = sm.ExecCommitBlock(proxyApp.Consensus(), block, log.TestingLogger(), stateDB)
 		require.Nil(t, err, tc.desc)
@@ -112,35 +112,35 @@ func TestBeginBlockByzantineValidators(t *testing.T) {
 	state, stateDB, _ := makeState(2, 12)
 
 	prevHash := state.LastBlockID.Hash
-	prevParts := types.PartSetHeader{}
-	prevBlockID := types.BlockID{Hash: prevHash, PartsHeader: prevParts}
+	prevParts := ttypes.PartSetHeader{}
+	prevBlockID := ttypes.BlockID{Hash: prevHash, PartsHeader: prevParts}
 
 	height1, idx1, val1 := int64(8), 0, state.Validators.Validators[0].Address
 	height2, idx2, val2 := int64(3), 1, state.Validators.Validators[1].Address
-	ev1 := types.NewMockGoodEvidence(height1, idx1, val1)
-	ev2 := types.NewMockGoodEvidence(height2, idx2, val2)
+	ev1 := ttypes.NewMockGoodEvidence(height1, idx1, val1)
+	ev2 := ttypes.NewMockGoodEvidence(height2, idx2, val2)
 
 	now := tmtime.Now()
 	valSet := state.Validators
 	testCases := []struct {
 		desc                        string
-		evidence                    []types.Evidence
+		evidence                    []ttypes.Evidence
 		expectedByzantineValidators []abci.Evidence
 	}{
-		{"none byzantine", []types.Evidence{}, []abci.Evidence{}},
-		{"one byzantine", []types.Evidence{ev1}, []abci.Evidence{types.TM2PB.Evidence(ev1, valSet, now)}},
-		{"multiple byzantine", []types.Evidence{ev1, ev2}, []abci.Evidence{
-			types.TM2PB.Evidence(ev1, valSet, now),
-			types.TM2PB.Evidence(ev2, valSet, now)}},
+		{"none byzantine", []ttypes.Evidence{}, []abci.Evidence{}},
+		{"one byzantine", []ttypes.Evidence{ev1}, []abci.Evidence{ttypes.TM2PB.Evidence(ev1, valSet, now)}},
+		{"multiple byzantine", []ttypes.Evidence{ev1, ev2}, []abci.Evidence{
+			ttypes.TM2PB.Evidence(ev1, valSet, now),
+			ttypes.TM2PB.Evidence(ev2, valSet, now)}},
 	}
 
-	commitSig0 := (&types.Vote{ValidatorIndex: 0, Timestamp: now, Type: types.PrecommitType}).CommitSig()
-	commitSig1 := (&types.Vote{ValidatorIndex: 1, Timestamp: now}).CommitSig()
-	commitSigs := []*types.CommitSig{commitSig0, commitSig1}
-	lastCommit := types.NewCommit(prevBlockID, commitSigs)
+	commitSig0 := (&ttypes.Vote{ValidatorIndex: 0, Timestamp: now, Type: ttypes.PrecommitType}).CommitSig()
+	commitSig1 := (&ttypes.Vote{ValidatorIndex: 1, Timestamp: now}).CommitSig()
+	commitSigs := []*ttypes.CommitSig{commitSig0, commitSig1}
+	lastCommit := ttypes.NewCommit(prevBlockID, commitSigs)
 	for _, tc := range testCases {
 
-		block, _ := state.MakeBlock(10, makeTxs(2), lastCommit, nil, state.Validators.GetProposer().Address)
+		block, _ := state.MakeBlock(10, makeTxs(2), nil, lastCommit, nil, state.Validators.GetProposer().Address)
 		block.Time = now
 		block.Evidence.Evidence = tc.evidence
 		_, err = sm.ExecCommitBlock(proxyApp.Consensus(), block, log.TestingLogger(), stateDB)
@@ -157,20 +157,20 @@ func TestValidateValidatorUpdates(t *testing.T) {
 
 	secpKey := secp256k1.GenPrivKey().PubKey()
 
-	defaultValidatorParams := types.ValidatorParams{PubKeyTypes: []string{types.ABCIPubKeyTypeEd25519}}
+	defaultValidatorParams := ttypes.ValidatorParams{PubKeyTypes: []string{ttypes.ABCIPubKeyTypeEd25519}}
 
 	testCases := []struct {
 		name string
 
 		abciUpdates     []abci.ValidatorUpdate
-		validatorParams types.ValidatorParams
+		validatorParams ttypes.ValidatorParams
 
 		shouldErr bool
 	}{
 		{
 			"adding a validator is OK",
 
-			[]abci.ValidatorUpdate{{PubKey: types.TM2PB.PubKey(pubkey2), Power: 20}},
+			[]abci.ValidatorUpdate{{PubKey: ttypes.TM2PB.PubKey(pubkey2), Power: 20}},
 			defaultValidatorParams,
 
 			false,
@@ -178,7 +178,7 @@ func TestValidateValidatorUpdates(t *testing.T) {
 		{
 			"updating a validator is OK",
 
-			[]abci.ValidatorUpdate{{PubKey: types.TM2PB.PubKey(pubkey1), Power: 20}},
+			[]abci.ValidatorUpdate{{PubKey: ttypes.TM2PB.PubKey(pubkey1), Power: 20}},
 			defaultValidatorParams,
 
 			false,
@@ -186,7 +186,7 @@ func TestValidateValidatorUpdates(t *testing.T) {
 		{
 			"removing a validator is OK",
 
-			[]abci.ValidatorUpdate{{PubKey: types.TM2PB.PubKey(pubkey2), Power: 0}},
+			[]abci.ValidatorUpdate{{PubKey: ttypes.TM2PB.PubKey(pubkey2), Power: 0}},
 			defaultValidatorParams,
 
 			false,
@@ -194,7 +194,7 @@ func TestValidateValidatorUpdates(t *testing.T) {
 		{
 			"adding a validator with negative power results in error",
 
-			[]abci.ValidatorUpdate{{PubKey: types.TM2PB.PubKey(pubkey2), Power: -100}},
+			[]abci.ValidatorUpdate{{PubKey: ttypes.TM2PB.PubKey(pubkey2), Power: -100}},
 			defaultValidatorParams,
 
 			true,
@@ -202,7 +202,7 @@ func TestValidateValidatorUpdates(t *testing.T) {
 		{
 			"adding a validator with pubkey thats not in validator params results in error",
 
-			[]abci.ValidatorUpdate{{PubKey: types.TM2PB.PubKey(secpKey), Power: -100}},
+			[]abci.ValidatorUpdate{{PubKey: ttypes.TM2PB.PubKey(secpKey), Power: -100}},
 			defaultValidatorParams,
 
 			true,
@@ -223,60 +223,60 @@ func TestValidateValidatorUpdates(t *testing.T) {
 
 func TestUpdateValidators(t *testing.T) {
 	pubkey1 := ed25519.GenPrivKey().PubKey()
-	val1 := types.NewValidator(pubkey1, 10)
+	val1 := ttypes.NewValidator(pubkey1, 10)
 	pubkey2 := ed25519.GenPrivKey().PubKey()
-	val2 := types.NewValidator(pubkey2, 20)
+	val2 := ttypes.NewValidator(pubkey2, 20)
 
 	testCases := []struct {
 		name string
 
-		currentSet  *types.ValidatorSet
+		currentSet  *ttypes.ValidatorSet
 		abciUpdates []abci.ValidatorUpdate
 
-		resultingSet *types.ValidatorSet
+		resultingSet *ttypes.ValidatorSet
 		shouldErr    bool
 	}{
 		{
 			"adding a validator is OK",
 
-			types.NewValidatorSet([]*types.Validator{val1}),
-			[]abci.ValidatorUpdate{{PubKey: types.TM2PB.PubKey(pubkey2), Power: 20}},
+			ttypes.NewValidatorSet([]*ttypes.Validator{val1}),
+			[]abci.ValidatorUpdate{{PubKey: ttypes.TM2PB.PubKey(pubkey2), Power: 20}},
 
-			types.NewValidatorSet([]*types.Validator{val1, val2}),
+			ttypes.NewValidatorSet([]*ttypes.Validator{val1, val2}),
 			false,
 		},
 		{
 			"updating a validator is OK",
 
-			types.NewValidatorSet([]*types.Validator{val1}),
-			[]abci.ValidatorUpdate{{PubKey: types.TM2PB.PubKey(pubkey1), Power: 20}},
+			ttypes.NewValidatorSet([]*ttypes.Validator{val1}),
+			[]abci.ValidatorUpdate{{PubKey: ttypes.TM2PB.PubKey(pubkey1), Power: 20}},
 
-			types.NewValidatorSet([]*types.Validator{types.NewValidator(pubkey1, 20)}),
+			ttypes.NewValidatorSet([]*ttypes.Validator{ttypes.NewValidator(pubkey1, 20)}),
 			false,
 		},
 		{
 			"removing a validator is OK",
 
-			types.NewValidatorSet([]*types.Validator{val1, val2}),
-			[]abci.ValidatorUpdate{{PubKey: types.TM2PB.PubKey(pubkey2), Power: 0}},
+			ttypes.NewValidatorSet([]*ttypes.Validator{val1, val2}),
+			[]abci.ValidatorUpdate{{PubKey: ttypes.TM2PB.PubKey(pubkey2), Power: 0}},
 
-			types.NewValidatorSet([]*types.Validator{val1}),
+			ttypes.NewValidatorSet([]*ttypes.Validator{val1}),
 			false,
 		},
 		{
 			"removing a non-existing validator results in error",
 
-			types.NewValidatorSet([]*types.Validator{val1}),
-			[]abci.ValidatorUpdate{{PubKey: types.TM2PB.PubKey(pubkey2), Power: 0}},
+			ttypes.NewValidatorSet([]*ttypes.Validator{val1}),
+			[]abci.ValidatorUpdate{{PubKey: ttypes.TM2PB.PubKey(pubkey2), Power: 0}},
 
-			types.NewValidatorSet([]*types.Validator{val1}),
+			ttypes.NewValidatorSet([]*ttypes.Validator{val1}),
 			true,
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			updates, err := types.PB2TM.ValidatorUpdates(tc.abciUpdates)
+			updates, err := ttypes.PB2TM.ValidatorUpdates(tc.abciUpdates)
 			assert.NoError(t, err)
 			err = tc.currentSet.UpdateWithChangeSet(updates)
 			if tc.shouldErr {
@@ -307,23 +307,23 @@ func TestEndBlockValidatorUpdates(t *testing.T) {
 
 	state, stateDB, _ := makeState(1, 1)
 
-	blockExec := sm.NewBlockExecutor(stateDB, log.TestingLogger(), proxyApp.Consensus(), mock.Mempool{}, sm.MockEvidencePool{})
+	blockExec := sm.NewBlockExecutor(stateDB, log.TestingLogger(), proxyApp.Consensus(), mock.Mempool{}, mock.Mempool{}, sm.MockEvidencePool{})
 
-	eventBus := types.NewEventBus()
+	eventBus := ttypes.NewEventBus()
 	err = eventBus.Start()
 	require.NoError(t, err)
 	defer eventBus.Stop()
 	blockExec.SetEventBus(eventBus)
 
-	updatesSub, err := eventBus.Subscribe(context.Background(), "TestEndBlockValidatorUpdates", types.EventQueryValidatorSetUpdates)
+	updatesSub, err := eventBus.Subscribe(context.Background(), "TestEndBlockValidatorUpdates", ttypes.EventQueryValidatorSetUpdates)
 	require.NoError(t, err)
 
 	block := makeBlock(state, 1)
-	blockID := types.BlockID{Hash: block.Hash(), PartsHeader: block.MakePartSet(testPartSize).Header()}
+	blockID := ttypes.BlockID{Hash: block.Hash(), PartsHeader: block.MakePartSet(testPartSize).Header()}
 
 	pubkey := ed25519.GenPrivKey().PubKey()
 	app.ValidatorUpdates = []abci.ValidatorUpdate{
-		{PubKey: types.TM2PB.PubKey(pubkey), Power: 10},
+		{PubKey: ttypes.TM2PB.PubKey(pubkey), Power: 10},
 	}
 
 	state, err = blockExec.ApplyBlock(state, blockID, block)
@@ -340,7 +340,7 @@ func TestEndBlockValidatorUpdates(t *testing.T) {
 	// test we threw an event
 	select {
 	case msg := <-updatesSub.Out():
-		event, ok := msg.Data().(types.EventDataValidatorSetUpdates)
+		event, ok := msg.Data().(ttypes.EventDataValidatorSetUpdates)
 		require.True(t, ok, "Expected event of type EventDataValidatorSetUpdates, got %T", msg.Data())
 		if assert.NotEmpty(t, event.ValidatorUpdates) {
 			assert.Equal(t, pubkey, event.ValidatorUpdates[0].PubKey)
@@ -364,14 +364,14 @@ func TestEndBlockValidatorUpdatesResultingInEmptySet(t *testing.T) {
 	defer proxyApp.Stop()
 
 	state, stateDB, _ := makeState(1, 1)
-	blockExec := sm.NewBlockExecutor(stateDB, log.TestingLogger(), proxyApp.Consensus(), mock.Mempool{}, sm.MockEvidencePool{})
+	blockExec := sm.NewBlockExecutor(stateDB, log.TestingLogger(), proxyApp.Consensus(), mock.Mempool{}, mock.Mempool{}, sm.MockEvidencePool{})
 
 	block := makeBlock(state, 1)
-	blockID := types.BlockID{Hash: block.Hash(), PartsHeader: block.MakePartSet(testPartSize).Header()}
+	blockID := ttypes.BlockID{Hash: block.Hash(), PartsHeader: block.MakePartSet(testPartSize).Header()}
 
 	// Remove the only validator
 	app.ValidatorUpdates = []abci.ValidatorUpdate{
-		{PubKey: types.TM2PB.PubKey(state.Validators.Validators[0].PubKey), Power: 0},
+		{PubKey: ttypes.TM2PB.PubKey(state.Validators.Validators[0].PubKey), Power: 0},
 	}
 
 	assert.NotPanics(t, func() { state, err = blockExec.ApplyBlock(state, blockID, block) })

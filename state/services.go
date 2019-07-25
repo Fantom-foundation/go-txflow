@@ -49,5 +49,5 @@ type MockEvidencePool struct{}
 
 func (m MockEvidencePool) PendingEvidence(int64) []ttypes.Evidence { return nil }
 func (m MockEvidencePool) AddEvidence(ttypes.Evidence) error       { return nil }
-func (m MockEvidencePool) Update(*ttypes.Block, State)             {}
+func (m MockEvidencePool) Update(*types.Block, State)              {}
 func (m MockEvidencePool) IsCommitted(ttypes.Evidence) bool        { return false }

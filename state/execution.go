@@ -248,7 +248,7 @@ func execBlockOnProxyApp(
 	proxyAppConn proxy.AppConnConsensus,
 	block *types.Block,
 	stateDB dbm.DB,
-) (*ABCIResponses, error) {
+) (*sm.ABCIResponses, error) {
 	var validTxs, invalidTxs = 0, 0
 
 	txIndex := 0
@@ -312,10 +312,10 @@ func execBlockOnProxyApp(
 func getBeginBlockValidatorInfo(block *types.Block, stateDB dbm.DB) (abci.LastCommitInfo, []abci.Evidence) {
 	voteInfos := make([]abci.VoteInfo, block.LastCommit.Size())
 	byzVals := make([]abci.Evidence, len(block.Evidence.Evidence))
-	var lastValSet *types.ValidatorSet
+	var lastValSet *ttypes.ValidatorSet
 	var err error
 	if block.Height > 1 {
-		lastValSet, err = LoadValidators(stateDB, block.Height-1)
+		lastValSet, err = sm.LoadValidators(stateDB, block.Height-1)
 		if err != nil {
 			panic(err) // shouldn't happen
 		}
@@ -331,16 +331,16 @@ func getBeginBlockValidatorInfo(block *types.Block, stateDB dbm.DB) (abci.LastCo
 				precommitLen, valSetLen, block.Height, block.LastCommit.Precommits, lastValSet.Validators))
 		}
 	} else {
-		lastValSet = types.NewValidatorSet(nil)
+		lastValSet = ttypes.NewValidatorSet(nil)
 	}
 
 	for i, val := range lastValSet.Validators {
-		var vote *types.CommitSig
+		var vote *ttypes.CommitSig
 		if i < len(block.LastCommit.Precommits) {
 			vote = block.LastCommit.Precommits[i]
 		}
 		voteInfo := abci.VoteInfo{
-			Validator:       types.TM2PB.Validator(val),
+			Validator:       ttypes.TM2PB.Validator(val),
 			SignedLastBlock: vote != nil,
 		}
 		voteInfos[i] = voteInfo
@@ -350,11 +350,11 @@ func getBeginBlockValidatorInfo(block *types.Block, stateDB dbm.DB) (abci.LastCo
 		// We need the validator set. We already did this in validateBlock.
 		// TODO: Should we instead cache the valset in the evidence itself and add
 		// `SetValidatorSet()` and `ToABCI` methods ?
-		valset, err := LoadValidators(stateDB, ev.Height())
+		valset, err := sm.LoadValidators(stateDB, ev.Height())
 		if err != nil {
 			panic(err) // shouldn't happen
 		}
-		byzVals[i] = types.TM2PB.Evidence(ev, valset, block.Time)
+		byzVals[i] = ttypes.TM2PB.Evidence(ev, valset, block.Time)
 	}
 
 	commitInfo := abci.LastCommitInfo{
@@ -366,7 +366,7 @@ func getBeginBlockValidatorInfo(block *types.Block, stateDB dbm.DB) (abci.LastCo
 }
 
 func validateValidatorUpdates(abciUpdates []abci.ValidatorUpdate,
-	params types.ValidatorParams) error {
+	params ttypes.ValidatorParams) error {
 	for _, valUpdate := range abciUpdates {
 		if valUpdate.GetPower() < 0 {
 			return fmt.Errorf("Voting power can't be negative %v", valUpdate)
@@ -389,10 +389,10 @@ func validateValidatorUpdates(abciUpdates []abci.ValidatorUpdate,
 // updateState returns a new State updated according to the header and responses.
 func updateState(
 	state State,
-	blockID types.BlockID,
-	header *types.Header,
-	abciResponses *ABCIResponses,
-	validatorUpdates []*types.Validator,
+	blockID ttypes.BlockID,
+	header *ttypes.Header,
+	abciResponses *sm.ABCIResponses,
+	validatorUpdates []*ttypes.Validator,
 ) (State, error) {
 
 	// Copy the valset so we can apply changes from EndBlock
@@ -454,19 +454,19 @@ func updateState(
 // Fire TxEvent for every tx.
 // NOTE: if Tendermint crashes before commit, some or all of these events may be published again.
 func fireEvents(logger log.Logger, eventBus ttypes.BlockEventPublisher, block *types.Block, abciResponses *sm.ABCIResponses, validatorUpdates []*ttypes.Validator) {
-	eventBus.PublishEventNewBlock(types.EventDataNewBlock{
-		Block:            block,
+	eventBus.PublishEventNewBlock(ttypes.EventDataNewBlock{
+		Block:            block.GetTendermintBlock(),
 		ResultBeginBlock: *abciResponses.BeginBlock,
 		ResultEndBlock:   *abciResponses.EndBlock,
 	})
-	eventBus.PublishEventNewBlockHeader(types.EventDataNewBlockHeader{
+	eventBus.PublishEventNewBlockHeader(ttypes.EventDataNewBlockHeader{
 		Header:           block.Header,
 		ResultBeginBlock: *abciResponses.BeginBlock,
 		ResultEndBlock:   *abciResponses.EndBlock,
 	})
 
 	for i, tx := range block.Data.Txs {
-		eventBus.PublishEventTx(types.EventDataTx{TxResult: types.TxResult{
+		eventBus.PublishEventTx(ttypes.EventDataTx{TxResult: ttypes.TxResult{
 			Height: block.Height,
 			Index:  uint32(i),
 			Tx:     tx,
@@ -476,7 +476,7 @@ func fireEvents(logger log.Logger, eventBus ttypes.BlockEventPublisher, block *t
 
 	if len(validatorUpdates) > 0 {
 		eventBus.PublishEventValidatorSetUpdates(
-			types.EventDataValidatorSetUpdates{ValidatorUpdates: validatorUpdates})
+			ttypes.EventDataValidatorSetUpdates{ValidatorUpdates: validatorUpdates})
 	}
 }
 

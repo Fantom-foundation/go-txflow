@@ -35,7 +35,7 @@ require (
 	github.com/tendermint/btcd v0.1.1 // indirect
 	github.com/tendermint/go-amino v0.15.0
 	github.com/tendermint/iavl v0.12.1 // indirect
-	github.com/tendermint/tendermint v0.31.2-0.20190723133536-362729c2bb3c
+	github.com/tendermint/tendermint v0.31.2-0.20190724190500-3a1f8768022e
 	github.com/tendermint/tm-cmn v0.0.0-20190716080004-dfcde30d5acb
 	github.com/ugorji/go/codec v1.1.5-pre
 	gopkg.in/yaml.v2 v2.2.2 // indirect

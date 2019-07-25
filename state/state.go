@@ -2,6 +2,8 @@ package state
 
 import (
 	"bytes"
+	"fmt"
+	"io/ioutil"
 	"time"
 
 	"github.com/Fantom-foundation/go-txflow/types"
@@ -159,4 +161,72 @@ func (state State) MakeBlock(
 	)
 
 	return block, block.MakePartSet(ttypes.BlockPartSizeBytes)
+}
+
+//------------------------------------------------------------------------
+// Genesis
+
+// MakeGenesisStateFromFile reads and unmarshals state from the given
+// file.
+//
+// Used during replay and in tests.
+func MakeGenesisStateFromFile(genDocFile string) (State, error) {
+	genDoc, err := MakeGenesisDocFromFile(genDocFile)
+	if err != nil {
+		return State{}, err
+	}
+	return MakeGenesisState(genDoc)
+}
+
+// MakeGenesisDocFromFile reads and unmarshals genesis doc from the given file.
+func MakeGenesisDocFromFile(genDocFile string) (*ttypes.GenesisDoc, error) {
+	genDocJSON, err := ioutil.ReadFile(genDocFile)
+	if err != nil {
+		return nil, fmt.Errorf("Couldn't read GenesisDoc file: %v", err)
+	}
+	genDoc, err := ttypes.GenesisDocFromJSON(genDocJSON)
+	if err != nil {
+		return nil, fmt.Errorf("Error reading GenesisDoc: %v", err)
+	}
+	return genDoc, nil
+}
+
+// MakeGenesisState creates state from types.GenesisDoc.
+func MakeGenesisState(genDoc *ttypes.GenesisDoc) (State, error) {
+	err := genDoc.ValidateAndComplete()
+	if err != nil {
+		return State{}, fmt.Errorf("Error in genesis file: %v", err)
+	}
+
+	var validatorSet, nextValidatorSet *ttypes.ValidatorSet
+	if genDoc.Validators == nil {
+		validatorSet = ttypes.NewValidatorSet(nil)
+		nextValidatorSet = ttypes.NewValidatorSet(nil)
+	} else {
+		validators := make([]*ttypes.Validator, len(genDoc.Validators))
+		for i, val := range genDoc.Validators {
+			validators[i] = ttypes.NewValidator(val.PubKey, val.Power)
+		}
+		validatorSet = ttypes.NewValidatorSet(validators)
+		nextValidatorSet = ttypes.NewValidatorSet(validators).CopyIncrementProposerPriority(1)
+	}
+
+	return State{
+		Version: initStateVersion,
+		ChainID: genDoc.ChainID,
+
+		LastBlockHeight: 0,
+		LastBlockID:     ttypes.BlockID{},
+		LastBlockTime:   genDoc.GenesisTime,
+
+		NextValidators:              nextValidatorSet,
+		Validators:                  validatorSet,
+		LastValidators:              ttypes.NewValidatorSet(nil),
+		LastHeightValidatorsChanged: 1,
+
+		ConsensusParams:                  *genDoc.ConsensusParams,
+		LastHeightConsensusParamsChanged: 1,
+
+		AppHash: genDoc.AppHash,
+	}, nil
 }

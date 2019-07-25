@@ -2,6 +2,7 @@ package state
 
 import (
 	abci "github.com/tendermint/tendermint/abci/types"
+	sm "github.com/tendermint/tendermint/state"
 	"github.com/tendermint/tendermint/types"
 	dbm "github.com/tendermint/tm-cmn/db"
 )
@@ -25,7 +26,7 @@ func UpdateState(
 	state State,
 	blockID types.BlockID,
 	header *types.Header,
-	abciResponses *ABCIResponses,
+	abciResponses *sm.ABCIResponses,
 	validatorUpdates []*types.Validator,
 ) (State, error) {
 	return updateState(state, blockID, header, abciResponses, validatorUpdates)
@@ -45,7 +46,7 @@ func CalcValidatorsKey(height int64) []byte {
 
 // SaveABCIResponses is an alias for the private saveABCIResponses method in
 // store.go, exported exclusively and explicitly for testing.
-func SaveABCIResponses(db dbm.DB, height int64, abciResponses *ABCIResponses) {
+func SaveABCIResponses(db dbm.DB, height int64, abciResponses *sm.ABCIResponses) {
 	saveABCIResponses(db, height, abciResponses)
 }
 

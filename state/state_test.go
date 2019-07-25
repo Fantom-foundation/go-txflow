@@ -8,12 +8,13 @@ import (
 	"os"
 	"testing"
 
+	sm "github.com/Fantom-foundation/go-txflow/state"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	abci "github.com/tendermint/tendermint/abci/types"
 	"github.com/tendermint/tendermint/crypto/ed25519"
 	cmn "github.com/tendermint/tendermint/libs/common"
-	sm "github.com/tendermint/tendermint/state"
+	tsm "github.com/tendermint/tendermint/state"
 	dbm "github.com/tendermint/tm-cmn/db"
 
 	cfg "github.com/tendermint/tendermint/config"
@@ -58,7 +59,7 @@ func TestMakeGenesisStateNilValidators(t *testing.T) {
 		Validators: nil,
 	}
 	require.Nil(t, doc.ValidateAndComplete())
-	state, err := sm.MakeGenesisState(&doc)
+	state, err := tsm.MakeGenesisState(&doc)
 	require.Nil(t, err)
 	require.Equal(t, 0, len(state.Validators.Validators))
 	require.Equal(t, 0, len(state.NextValidators.Validators))
@@ -99,7 +100,7 @@ func TestABCIResponsesSaveLoad1(t *testing.T) {
 	}}
 
 	sm.SaveABCIResponses(stateDB, block.Height, abciResponses)
-	loadedABCIResponses, err := sm.LoadABCIResponses(stateDB, block.Height)
+	loadedABCIResponses, err := tsm.LoadABCIResponses(stateDB, block.Height)
 	assert.Nil(err)
 	assert.Equal(abciResponses, loadedABCIResponses,
 		fmt.Sprintf("ABCIResponses don't match:\ngot:       %v\nexpected: %v\n",
@@ -154,14 +155,14 @@ func TestABCIResponsesSaveLoad2(t *testing.T) {
 	// Query all before, this should return error.
 	for i := range cases {
 		h := int64(i + 1)
-		res, err := sm.LoadABCIResponses(stateDB, h)
+		res, err := tsm.LoadABCIResponses(stateDB, h)
 		assert.Error(err, "%d: %#v", i, res)
 	}
 
 	// Add all cases.
 	for i, tc := range cases {
 		h := int64(i + 1) // last block height, one below what we save
-		responses := &sm.ABCIResponses{
+		responses := &tsm.ABCIResponses{
 			DeliverTx: tc.added,
 			EndBlock:  &abci.ResponseEndBlock{},
 		}
@@ -171,7 +172,7 @@ func TestABCIResponsesSaveLoad2(t *testing.T) {
 	// Query all before, should return expected value.
 	for i, tc := range cases {
 		h := int64(i + 1)
-		res, err := sm.LoadABCIResponses(stateDB, h)
+		res, err := tsm.LoadABCIResponses(stateDB, h)
 		assert.NoError(err, "%d", i)
 		assert.Equal(tc.expected.Hash(), res.ResultsHash(), "%d", i)
 	}
@@ -185,16 +186,16 @@ func TestValidatorSimpleSaveLoad(t *testing.T) {
 	assert := assert.New(t)
 
 	// Can't load anything for height 0.
-	v, err := sm.LoadValidators(stateDB, 0)
-	assert.IsType(sm.ErrNoValSetForHeight{}, err, "expected err at height 0")
+	v, err := tsm.LoadValidators(stateDB, 0)
+	assert.IsType(tsm.ErrNoValSetForHeight{}, err, "expected err at height 0")
 
 	// Should be able to load for height 1.
-	v, err = sm.LoadValidators(stateDB, 1)
+	v, err = tsm.LoadValidators(stateDB, 1)
 	assert.Nil(err, "expected no err at height 1")
 	assert.Equal(v.Hash(), state.Validators.Hash(), "expected validator hashes to match")
 
 	// Should be able to load for height 2.
-	v, err = sm.LoadValidators(stateDB, 2)
+	v, err = tsm.LoadValidators(stateDB, 2)
 	assert.Nil(err, "expected no err at height 2")
 	assert.Equal(v.Hash(), state.NextValidators.Hash(), "expected validator hashes to match")
 
@@ -202,9 +203,9 @@ func TestValidatorSimpleSaveLoad(t *testing.T) {
 	state.LastBlockHeight++
 	nextHeight := state.LastBlockHeight + 1
 	sm.SaveValidatorsInfo(stateDB, nextHeight+1, state.LastHeightValidatorsChanged, state.NextValidators)
-	vp0, err := sm.LoadValidators(stateDB, nextHeight+0)
+	vp0, err := tsm.LoadValidators(stateDB, nextHeight+0)
 	assert.Nil(err, "expected no err")
-	vp1, err := sm.LoadValidators(stateDB, nextHeight+1)
+	vp1, err := tsm.LoadValidators(stateDB, nextHeight+1)
 	assert.Nil(err, "expected no err")
 	assert.Equal(vp0.Hash(), state.Validators.Hash(), "expected validator hashes to match")
 	assert.Equal(vp1.Hash(), state.NextValidators.Hash(), "expected next validator hashes to match")
@@ -257,7 +258,7 @@ func TestOneValidatorChangesSaveLoad(t *testing.T) {
 	}
 
 	for i, power := range testCases {
-		v, err := sm.LoadValidators(stateDB, int64(i+1+1)) // +1 because vset changes delayed by 1 block.
+		v, err := tsm.LoadValidators(stateDB, int64(i+1+1)) // +1 because vset changes delayed by 1 block.
 		assert.Nil(t, err, fmt.Sprintf("expected no err at height %d", i))
 		assert.Equal(t, v.Size(), 1, "validator set size is greater than 1: %d", v.Size())
 		_, val := v.GetByIndex(0)
@@ -404,7 +405,7 @@ func TestProposerPriorityDoesNotGetResetToZero(t *testing.T) {
 
 	block := makeBlock(state, state.LastBlockHeight+1)
 	blockID := types.BlockID{Hash: block.Hash(), PartsHeader: block.MakePartSet(testPartSize).Header()}
-	abciResponses := &sm.ABCIResponses{
+	abciResponses := &tsm.ABCIResponses{
 		EndBlock: &abci.ResponseEndBlock{ValidatorUpdates: nil},
 	}
 	validatorUpdates, err := types.PB2TM.ValidatorUpdates(abciResponses.EndBlock.ValidatorUpdates)
@@ -515,7 +516,7 @@ func TestProposerPriorityProposerAlternates(t *testing.T) {
 	block := makeBlock(state, state.LastBlockHeight+1)
 	blockID := types.BlockID{Hash: block.Hash(), PartsHeader: block.MakePartSet(testPartSize).Header()}
 	// no updates:
-	abciResponses := &sm.ABCIResponses{
+	abciResponses := &tsm.ABCIResponses{
 		EndBlock: &abci.ResponseEndBlock{ValidatorUpdates: nil},
 	}
 	validatorUpdates, err := types.PB2TM.ValidatorUpdates(abciResponses.EndBlock.ValidatorUpdates)
@@ -597,7 +598,7 @@ func TestProposerPriorityProposerAlternates(t *testing.T) {
 	// no changes in voting power and both validators have same voting power
 	// -> proposers should alternate:
 	oldState := updatedState3
-	abciResponses = &sm.ABCIResponses{
+	abciResponses = &tsm.ABCIResponses{
 		EndBlock: &abci.ResponseEndBlock{ValidatorUpdates: nil},
 	}
 	validatorUpdates, err = types.PB2TM.ValidatorUpdates(abciResponses.EndBlock.ValidatorUpdates)
@@ -612,7 +613,7 @@ func TestProposerPriorityProposerAlternates(t *testing.T) {
 
 	for i := 0; i < 1000; i++ {
 		// no validator updates:
-		abciResponses := &sm.ABCIResponses{
+		abciResponses := &tsm.ABCIResponses{
 			EndBlock: &abci.ResponseEndBlock{ValidatorUpdates: nil},
 		}
 		validatorUpdates, err = types.PB2TM.ValidatorUpdates(abciResponses.EndBlock.ValidatorUpdates)
@@ -659,7 +660,7 @@ func TestLargeGenesisValidator(t *testing.T) {
 	oldState := state
 	for i := 0; i < 10; i++ {
 		// no updates:
-		abciResponses := &sm.ABCIResponses{
+		abciResponses := &tsm.ABCIResponses{
 			EndBlock: &abci.ResponseEndBlock{ValidatorUpdates: nil},
 		}
 		validatorUpdates, err := types.PB2TM.ValidatorUpdates(abciResponses.EndBlock.ValidatorUpdates)
@@ -688,7 +689,7 @@ func TestLargeGenesisValidator(t *testing.T) {
 	firstAddedVal := abci.ValidatorUpdate{PubKey: types.TM2PB.PubKey(firstAddedValPubKey), Power: firstAddedValVotingPower}
 	validatorUpdates, err := types.PB2TM.ValidatorUpdates([]abci.ValidatorUpdate{firstAddedVal})
 	assert.NoError(t, err)
-	abciResponses := &sm.ABCIResponses{
+	abciResponses := &tsm.ABCIResponses{
 		EndBlock: &abci.ResponseEndBlock{ValidatorUpdates: []abci.ValidatorUpdate{firstAddedVal}},
 	}
 	block := makeBlock(oldState, oldState.LastBlockHeight+1)
@@ -699,7 +700,7 @@ func TestLargeGenesisValidator(t *testing.T) {
 	lastState := updatedState
 	for i := 0; i < 200; i++ {
 		// no updates:
-		abciResponses := &sm.ABCIResponses{
+		abciResponses := &tsm.ABCIResponses{
 			EndBlock: &abci.ResponseEndBlock{ValidatorUpdates: nil},
 		}
 		validatorUpdates, err := types.PB2TM.ValidatorUpdates(abciResponses.EndBlock.ValidatorUpdates)
@@ -733,7 +734,7 @@ func TestLargeGenesisValidator(t *testing.T) {
 		validatorUpdates, err := types.PB2TM.ValidatorUpdates([]abci.ValidatorUpdate{addedVal})
 		assert.NoError(t, err)
 
-		abciResponses := &sm.ABCIResponses{
+		abciResponses := &tsm.ABCIResponses{
 			EndBlock: &abci.ResponseEndBlock{ValidatorUpdates: []abci.ValidatorUpdate{addedVal}},
 		}
 		block := makeBlock(oldState, oldState.LastBlockHeight+1)
@@ -745,7 +746,7 @@ func TestLargeGenesisValidator(t *testing.T) {
 
 	// remove genesis validator:
 	removeGenesisVal := abci.ValidatorUpdate{PubKey: types.TM2PB.PubKey(genesisPubKey), Power: 0}
-	abciResponses = &sm.ABCIResponses{
+	abciResponses = &tsm.ABCIResponses{
 		EndBlock: &abci.ResponseEndBlock{ValidatorUpdates: []abci.ValidatorUpdate{removeGenesisVal}},
 	}
 	block = makeBlock(oldState, oldState.LastBlockHeight+1)
@@ -763,7 +764,7 @@ func TestLargeGenesisValidator(t *testing.T) {
 	count := 0
 	isProposerUnchanged := true
 	for isProposerUnchanged {
-		abciResponses := &sm.ABCIResponses{
+		abciResponses := &tsm.ABCIResponses{
 			EndBlock: &abci.ResponseEndBlock{ValidatorUpdates: nil},
 		}
 		validatorUpdates, err = types.PB2TM.ValidatorUpdates(abciResponses.EndBlock.ValidatorUpdates)
@@ -786,7 +787,7 @@ func TestLargeGenesisValidator(t *testing.T) {
 	proposers := make([]*types.Validator, numVals)
 	for i := 0; i < 100; i++ {
 		// no updates:
-		abciResponses := &sm.ABCIResponses{
+		abciResponses := &tsm.ABCIResponses{
 			EndBlock: &abci.ResponseEndBlock{ValidatorUpdates: nil},
 		}
 		validatorUpdates, err := types.PB2TM.ValidatorUpdates(abciResponses.EndBlock.ValidatorUpdates)
@@ -817,11 +818,11 @@ func TestStoreLoadValidatorsIncrementsProposerPriority(t *testing.T) {
 
 	nextHeight := state.LastBlockHeight + 1
 
-	v0, err := sm.LoadValidators(stateDB, nextHeight)
+	v0, err := tsm.LoadValidators(stateDB, nextHeight)
 	assert.Nil(t, err)
 	acc0 := v0.Validators[0].ProposerPriority
 
-	v1, err := sm.LoadValidators(stateDB, nextHeight+1)
+	v1, err := tsm.LoadValidators(stateDB, nextHeight+1)
 	assert.Nil(t, err)
 	acc1 := v1.Validators[0].ProposerPriority
 
@@ -857,7 +858,7 @@ func TestManyValidatorChangesSaveLoad(t *testing.T) {
 	sm.SaveValidatorsInfo(stateDB, nextHeight+1, state.LastHeightValidatorsChanged, state.NextValidators)
 
 	// Load nextheight, it should be the oldpubkey.
-	v0, err := sm.LoadValidators(stateDB, nextHeight)
+	v0, err := tsm.LoadValidators(stateDB, nextHeight)
 	assert.Nil(t, err)
 	assert.Equal(t, valSetSize, v0.Size())
 	index, val := v0.GetByAddress(pubkeyOld.Address())
@@ -867,7 +868,7 @@ func TestManyValidatorChangesSaveLoad(t *testing.T) {
 	}
 
 	// Load nextheight+1, it should be the new pubkey.
-	v1, err := sm.LoadValidators(stateDB, nextHeight+1)
+	v1, err := tsm.LoadValidators(stateDB, nextHeight+1)
 	assert.Nil(t, err)
 	assert.Equal(t, valSetSize, v1.Size())
 	index, val = v1.GetByAddress(pubkey.Address())
@@ -947,7 +948,7 @@ func TestConsensusParamsChangesSaveLoad(t *testing.T) {
 	}
 
 	for _, testCase := range testCases {
-		p, err := sm.LoadConsensusParams(stateDB, testCase.height)
+		p, err := tsm.LoadConsensusParams(stateDB, testCase.height)
 		assert.Nil(t, err, fmt.Sprintf("expected no err at height %d", testCase.height))
 		assert.Equal(t, testCase.params, p, fmt.Sprintf(`unexpected consensus params at
                 height %d`, testCase.height))

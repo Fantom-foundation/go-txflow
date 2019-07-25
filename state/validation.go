@@ -7,6 +7,7 @@ import (
 
 	"github.com/Fantom-foundation/go-txflow/types"
 	"github.com/tendermint/tendermint/crypto"
+	sm "github.com/tendermint/tendermint/state"
 	ttypes "github.com/tendermint/tendermint/types"
 	dbm "github.com/tendermint/tm-cmn/db"
 )
@@ -95,7 +96,7 @@ func validateBlock(evidencePool EvidencePool, stateDB dbm.DB, state State, block
 		}
 	} else {
 		if len(block.LastCommit.Precommits) != state.LastValidators.Size() {
-			return types.NewErrInvalidCommitPrecommits(state.LastValidators.Size(), len(block.LastCommit.Precommits))
+			return ttypes.NewErrInvalidCommitPrecommits(state.LastValidators.Size(), len(block.LastCommit.Precommits))
 		}
 		err := state.LastValidators.VerifyCommit(
 			state.ChainID, state.LastBlockID, block.Height-1, block.LastCommit)
@@ -113,7 +114,7 @@ func validateBlock(evidencePool EvidencePool, stateDB dbm.DB, state State, block
 			)
 		}
 
-		medianTime := MedianTime(block.LastCommit, state.LastValidators)
+		medianTime := sm.MedianTime(block.LastCommit, state.LastValidators)
 		if !block.Time.Equal(medianTime) {
 			return fmt.Errorf("Invalid block time. Expected %v, got %v",
 				medianTime,
@@ -131,20 +132,20 @@ func validateBlock(evidencePool EvidencePool, stateDB dbm.DB, state State, block
 	}
 
 	// Limit the amount of evidence
-	maxNumEvidence, _ := types.MaxEvidencePerBlock(state.ConsensusParams.Block.MaxBytes)
+	maxNumEvidence, _ := ttypes.MaxEvidencePerBlock(state.ConsensusParams.Block.MaxBytes)
 	numEvidence := int64(len(block.Evidence.Evidence))
 	if numEvidence > maxNumEvidence {
-		return types.NewErrEvidenceOverflow(maxNumEvidence, numEvidence)
+		return ttypes.NewErrEvidenceOverflow(maxNumEvidence, numEvidence)
 
 	}
 
 	// Validate all evidence.
 	for _, ev := range block.Evidence.Evidence {
 		if err := VerifyEvidence(stateDB, state, ev); err != nil {
-			return types.NewErrEvidenceInvalid(ev, err)
+			return ttypes.NewErrEvidenceInvalid(ev, err)
 		}
 		if evidencePool != nil && evidencePool.IsCommitted(ev) {
-			return types.NewErrEvidenceInvalid(ev, errors.New("evidence was already committed"))
+			return ttypes.NewErrEvidenceInvalid(ev, errors.New("evidence was already committed"))
 		}
 	}
 
@@ -176,7 +177,7 @@ func VerifyEvidence(stateDB dbm.DB, state State, evidence ttypes.Evidence) error
 			evidence.Height(), height-maxAge)
 	}
 
-	valset, err := LoadValidators(stateDB, evidence.Height())
+	valset, err := sm.LoadValidators(stateDB, evidence.Height())
 	if err != nil {
 		// TODO: if err is just that we cant find it cuz we pruned, ignore.
 		// TODO: if its actually bad evidence, punish peer

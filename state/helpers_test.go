@@ -4,28 +4,30 @@ import (
 	"bytes"
 	"fmt"
 
+	sm "github.com/Fantom-foundation/go-txflow/state"
+	"github.com/Fantom-foundation/go-txflow/types"
 	abci "github.com/tendermint/tendermint/abci/types"
 	"github.com/tendermint/tendermint/crypto"
 	"github.com/tendermint/tendermint/crypto/ed25519"
 	"github.com/tendermint/tendermint/proxy"
-	sm "github.com/tendermint/tendermint/state"
-	"github.com/tendermint/tendermint/types"
+	tsm "github.com/tendermint/tendermint/state"
+	ttypes "github.com/tendermint/tendermint/types"
 	tmtime "github.com/tendermint/tendermint/types/time"
 	dbm "github.com/tendermint/tm-cmn/db"
 )
 
 type paramsChangeTestCase struct {
 	height int64
-	params types.ConsensusParams
+	params ttypes.ConsensusParams
 }
 
 // always returns true if asked if any evidence was already committed.
 type mockEvPoolAlwaysCommitted struct{}
 
-func (m mockEvPoolAlwaysCommitted) PendingEvidence(int64) []types.Evidence { return nil }
-func (m mockEvPoolAlwaysCommitted) AddEvidence(types.Evidence) error       { return nil }
-func (m mockEvPoolAlwaysCommitted) Update(*types.Block, sm.State)          {}
-func (m mockEvPoolAlwaysCommitted) IsCommitted(types.Evidence) bool        { return true }
+func (m mockEvPoolAlwaysCommitted) PendingEvidence(int64) []ttypes.Evidence { return nil }
+func (m mockEvPoolAlwaysCommitted) AddEvidence(ttypes.Evidence) error       { return nil }
+func (m mockEvPoolAlwaysCommitted) Update(*types.Block, sm.State)           {}
+func (m mockEvPoolAlwaysCommitted) IsCommitted(ttypes.Evidence) bool        { return true }
 
 func newTestApp() proxy.AppConns {
 	app := &testApp{}
@@ -36,49 +38,49 @@ func newTestApp() proxy.AppConns {
 func makeAndCommitGoodBlock(
 	state sm.State,
 	height int64,
-	lastCommit *types.Commit,
+	lastCommit *ttypes.Commit,
 	proposerAddr []byte,
 	blockExec *sm.BlockExecutor,
-	privVals map[string]types.PrivValidator,
-	evidence []types.Evidence) (sm.State, types.BlockID, *types.Commit, error) {
+	privVals map[string]ttypes.PrivValidator,
+	evidence []ttypes.Evidence) (sm.State, ttypes.BlockID, *ttypes.Commit, error) {
 	// A good block passes
 	state, blockID, err := makeAndApplyGoodBlock(state, height, lastCommit, proposerAddr, blockExec, evidence)
 	if err != nil {
-		return state, types.BlockID{}, nil, err
+		return state, ttypes.BlockID{}, nil, err
 	}
 
 	// Simulate a lastCommit for this block from all validators for the next height
 	commit, err := makeValidCommit(height, blockID, state.Validators, privVals)
 	if err != nil {
-		return state, types.BlockID{}, nil, err
+		return state, ttypes.BlockID{}, nil, err
 	}
 	return state, blockID, commit, nil
 }
 
-func makeAndApplyGoodBlock(state sm.State, height int64, lastCommit *types.Commit, proposerAddr []byte,
-	blockExec *sm.BlockExecutor, evidence []types.Evidence) (sm.State, types.BlockID, error) {
-	block, _ := state.MakeBlock(height, makeTxs(height), lastCommit, evidence, proposerAddr)
+func makeAndApplyGoodBlock(state sm.State, height int64, lastCommit *ttypes.Commit, proposerAddr []byte,
+	blockExec *sm.BlockExecutor, evidence []ttypes.Evidence) (sm.State, ttypes.BlockID, error) {
+	block, _ := state.MakeBlock(height, makeTxs(height), nil, lastCommit, evidence, proposerAddr)
 	if err := blockExec.ValidateBlock(state, block); err != nil {
-		return state, types.BlockID{}, err
+		return state, ttypes.BlockID{}, err
 	}
-	blockID := types.BlockID{Hash: block.Hash(), PartsHeader: types.PartSetHeader{}}
+	blockID := ttypes.BlockID{Hash: block.Hash(), PartsHeader: ttypes.PartSetHeader{}}
 	state, err := blockExec.ApplyBlock(state, blockID, block)
 	if err != nil {
-		return state, types.BlockID{}, err
+		return state, ttypes.BlockID{}, err
 	}
 	return state, blockID, nil
 }
 
-func makeVote(height int64, blockID types.BlockID, valSet *types.ValidatorSet, privVal types.PrivValidator) (*types.Vote, error) {
+func makeVote(height int64, blockID ttypes.BlockID, valSet *ttypes.ValidatorSet, privVal ttypes.PrivValidator) (*ttypes.Vote, error) {
 	addr := privVal.GetPubKey().Address()
 	idx, _ := valSet.GetByAddress(addr)
-	vote := &types.Vote{
+	vote := &ttypes.Vote{
 		ValidatorAddress: addr,
 		ValidatorIndex:   idx,
 		Height:           height,
 		Round:            0,
 		Timestamp:        tmtime.Now(),
-		Type:             types.PrecommitType,
+		Type:             ttypes.PrecommitType,
 		BlockID:          blockID,
 	}
 	if err := privVal.SignVote(chainID, vote); err != nil {
@@ -87,8 +89,8 @@ func makeVote(height int64, blockID types.BlockID, valSet *types.ValidatorSet, p
 	return vote, nil
 }
 
-func makeValidCommit(height int64, blockID types.BlockID, vals *types.ValidatorSet, privVals map[string]types.PrivValidator) (*types.Commit, error) {
-	sigs := make([]*types.CommitSig, 0)
+func makeValidCommit(height int64, blockID ttypes.BlockID, vals *ttypes.ValidatorSet, privVals map[string]ttypes.PrivValidator) (*ttypes.Commit, error) {
+	sigs := make([]*ttypes.CommitSig, 0)
 	for i := 0; i < vals.Size(); i++ {
 		_, val := vals.GetByIndex(i)
 		vote, err := makeVote(height, blockID, vals, privVals[val.Address.String()])
@@ -97,33 +99,33 @@ func makeValidCommit(height int64, blockID types.BlockID, vals *types.ValidatorS
 		}
 		sigs = append(sigs, vote.CommitSig())
 	}
-	return types.NewCommit(blockID, sigs), nil
+	return ttypes.NewCommit(blockID, sigs), nil
 }
 
 // make some bogus txs
-func makeTxs(height int64) (txs []types.Tx) {
+func makeTxs(height int64) (txs []ttypes.Tx) {
 	for i := 0; i < nTxsPerBlock; i++ {
-		txs = append(txs, types.Tx([]byte{byte(height), byte(i)}))
+		txs = append(txs, ttypes.Tx([]byte{byte(height), byte(i)}))
 	}
 	return txs
 }
 
-func makeState(nVals, height int) (sm.State, dbm.DB, map[string]types.PrivValidator) {
-	vals := make([]types.GenesisValidator, nVals)
-	privVals := make(map[string]types.PrivValidator, nVals)
+func makeState(nVals, height int) (sm.State, dbm.DB, map[string]ttypes.PrivValidator) {
+	vals := make([]ttypes.GenesisValidator, nVals)
+	privVals := make(map[string]ttypes.PrivValidator, nVals)
 	for i := 0; i < nVals; i++ {
 		secret := []byte(fmt.Sprintf("test%d", i))
 		pk := ed25519.GenPrivKeyFromSecret(secret)
 		valAddr := pk.PubKey().Address()
-		vals[i] = types.GenesisValidator{
+		vals[i] = ttypes.GenesisValidator{
 			Address: valAddr,
 			PubKey:  pk.PubKey(),
 			Power:   1000,
 			Name:    fmt.Sprintf("test%d", i),
 		}
-		privVals[valAddr.String()] = types.NewMockPVWithParams(pk, false, false)
+		privVals[valAddr.String()] = ttypes.NewMockPVWithParams(pk, false, false)
 	}
-	s, _ := sm.MakeGenesisState(&types.GenesisDoc{
+	s, _ := sm.MakeGenesisState(&ttypes.GenesisDoc{
 		ChainID:    chainID,
 		Validators: vals,
 		AppHash:    nil,
@@ -141,39 +143,39 @@ func makeState(nVals, height int) (sm.State, dbm.DB, map[string]types.PrivValida
 }
 
 func makeBlock(state sm.State, height int64) *types.Block {
-	block, _ := state.MakeBlock(height, makeTxs(state.LastBlockHeight), new(types.Commit), nil, state.Validators.GetProposer().Address)
+	block, _ := state.MakeBlock(height, makeTxs(state.LastBlockHeight), nil, new(ttypes.Commit), nil, state.Validators.GetProposer().Address)
 	return block
 }
 
-func genValSet(size int) *types.ValidatorSet {
-	vals := make([]*types.Validator, size)
+func genValSet(size int) *ttypes.ValidatorSet {
+	vals := make([]*ttypes.Validator, size)
 	for i := 0; i < size; i++ {
-		vals[i] = types.NewValidator(ed25519.GenPrivKey().PubKey(), 10)
+		vals[i] = ttypes.NewValidator(ed25519.GenPrivKey().PubKey(), 10)
 	}
-	return types.NewValidatorSet(vals)
+	return ttypes.NewValidatorSet(vals)
 }
 
 func makeConsensusParams(
 	blockBytes, blockGas int64,
 	blockTimeIotaMs int64,
 	evidenceAge int64,
-) types.ConsensusParams {
-	return types.ConsensusParams{
-		Block: types.BlockParams{
+) ttypes.ConsensusParams {
+	return ttypes.ConsensusParams{
+		Block: ttypes.BlockParams{
 			MaxBytes:   blockBytes,
 			MaxGas:     blockGas,
 			TimeIotaMs: blockTimeIotaMs,
 		},
-		Evidence: types.EvidenceParams{
+		Evidence: ttypes.EvidenceParams{
 			MaxAge: evidenceAge,
 		},
 	}
 }
 
-func makeHeaderPartsResponsesValPubKeyChange(state sm.State, pubkey crypto.PubKey) (types.Header, types.BlockID, *sm.ABCIResponses) {
+func makeHeaderPartsResponsesValPubKeyChange(state sm.State, pubkey crypto.PubKey) (ttypes.Header, ttypes.BlockID, *tsm.ABCIResponses) {
 
 	block := makeBlock(state, state.LastBlockHeight+1)
-	abciResponses := &sm.ABCIResponses{
+	abciResponses := &tsm.ABCIResponses{
 		EndBlock: &abci.ResponseEndBlock{ValidatorUpdates: nil},
 	}
 
@@ -182,19 +184,19 @@ func makeHeaderPartsResponsesValPubKeyChange(state sm.State, pubkey crypto.PubKe
 	if !bytes.Equal(pubkey.Bytes(), val.PubKey.Bytes()) {
 		abciResponses.EndBlock = &abci.ResponseEndBlock{
 			ValidatorUpdates: []abci.ValidatorUpdate{
-				types.TM2PB.NewValidatorUpdate(val.PubKey, 0),
-				types.TM2PB.NewValidatorUpdate(pubkey, 10),
+				ttypes.TM2PB.NewValidatorUpdate(val.PubKey, 0),
+				ttypes.TM2PB.NewValidatorUpdate(pubkey, 10),
 			},
 		}
 	}
 
-	return block.Header, types.BlockID{Hash: block.Hash(), PartsHeader: types.PartSetHeader{}}, abciResponses
+	return block.Header, ttypes.BlockID{Hash: block.Hash(), PartsHeader: ttypes.PartSetHeader{}}, abciResponses
 }
 
-func makeHeaderPartsResponsesValPowerChange(state sm.State, power int64) (types.Header, types.BlockID, *sm.ABCIResponses) {
+func makeHeaderPartsResponsesValPowerChange(state sm.State, power int64) (ttypes.Header, ttypes.BlockID, *tsm.ABCIResponses) {
 
 	block := makeBlock(state, state.LastBlockHeight+1)
-	abciResponses := &sm.ABCIResponses{
+	abciResponses := &tsm.ABCIResponses{
 		EndBlock: &abci.ResponseEndBlock{ValidatorUpdates: nil},
 	}
 
@@ -203,29 +205,29 @@ func makeHeaderPartsResponsesValPowerChange(state sm.State, power int64) (types.
 	if val.VotingPower != power {
 		abciResponses.EndBlock = &abci.ResponseEndBlock{
 			ValidatorUpdates: []abci.ValidatorUpdate{
-				types.TM2PB.NewValidatorUpdate(val.PubKey, power),
+				ttypes.TM2PB.NewValidatorUpdate(val.PubKey, power),
 			},
 		}
 	}
 
-	return block.Header, types.BlockID{Hash: block.Hash(), PartsHeader: types.PartSetHeader{}}, abciResponses
+	return block.Header, ttypes.BlockID{Hash: block.Hash(), PartsHeader: ttypes.PartSetHeader{}}, abciResponses
 }
 
-func makeHeaderPartsResponsesParams(state sm.State, params types.ConsensusParams) (types.Header, types.BlockID, *sm.ABCIResponses) {
+func makeHeaderPartsResponsesParams(state sm.State, params ttypes.ConsensusParams) (ttypes.Header, ttypes.BlockID, *tsm.ABCIResponses) {
 
 	block := makeBlock(state, state.LastBlockHeight+1)
-	abciResponses := &sm.ABCIResponses{
-		EndBlock: &abci.ResponseEndBlock{ConsensusParamUpdates: types.TM2PB.ConsensusParams(&params)},
+	abciResponses := &tsm.ABCIResponses{
+		EndBlock: &abci.ResponseEndBlock{ConsensusParamUpdates: ttypes.TM2PB.ConsensusParams(&params)},
 	}
-	return block.Header, types.BlockID{Hash: block.Hash(), PartsHeader: types.PartSetHeader{}}, abciResponses
+	return block.Header, ttypes.BlockID{Hash: block.Hash(), PartsHeader: ttypes.PartSetHeader{}}, abciResponses
 }
 
-func randomGenesisDoc() *types.GenesisDoc {
+func randomGenesisDoc() *ttypes.GenesisDoc {
 	pubkey := ed25519.GenPrivKey().PubKey()
-	return &types.GenesisDoc{
+	return &ttypes.GenesisDoc{
 		GenesisTime: tmtime.Now(),
 		ChainID:     "abc",
-		Validators: []types.GenesisValidator{
+		Validators: []ttypes.GenesisValidator{
 			{
 				Address: pubkey.Address(),
 				PubKey:  pubkey,
@@ -233,7 +235,7 @@ func randomGenesisDoc() *types.GenesisDoc {
 				Name:    "myval",
 			},
 		},
-		ConsensusParams: types.DefaultConsensusParams(),
+		ConsensusParams: ttypes.DefaultConsensusParams(),
 	}
 }
 

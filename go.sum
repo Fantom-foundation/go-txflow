@@ -297,6 +297,8 @@ github.com/tendermint/tendermint v0.31.2-0.20190713060927-78e634dd5c5a h1:0440vn
 github.com/tendermint/tendermint v0.31.2-0.20190713060927-78e634dd5c5a/go.mod h1:jmPDAKuNkev9793/ivn/fTBnfpA9mGBww8MPRNPNxnU=
 github.com/tendermint/tendermint v0.31.2-0.20190723133536-362729c2bb3c h1:nUQlek1KNg/gL49ObnXcg3V4MEL/xIYiW6GqmDBNd78=
 github.com/tendermint/tendermint v0.31.2-0.20190723133536-362729c2bb3c/go.mod h1:YjrvWEfyx7SFATiW3CZQTJWm51xq6+e3RGVEMaNEWNI=
+github.com/tendermint/tendermint v0.31.2-0.20190724190500-3a1f8768022e h1:33qUGj6xgl+euDcJV7aQ1cw8xnKm6rq0hMLMyIadLbM=
+github.com/tendermint/tendermint v0.31.2-0.20190724190500-3a1f8768022e/go.mod h1:YjrvWEfyx7SFATiW3CZQTJWm51xq6+e3RGVEMaNEWNI=
 github.com/tendermint/tendermint v0.31.5 h1:vTet8tCq3B9/J9Yo11dNZ8pOB7NtSy++bVSfkP4KzR4=
 github.com/tendermint/tendermint v0.31.5/go.mod h1:ymcPyWblXCplCPQjbOYbrF1fWnpslATMVqiGgWbZrlc=
 github.com/tendermint/tendermint v0.31.7 h1:2xhlEqmrvm+wJxgPTFpUHb0wgT9KFyi3n3FVG+dOlKU=

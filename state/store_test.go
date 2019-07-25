@@ -8,8 +8,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	sm "github.com/Fantom-foundation/go-txflow/state"
 	cfg "github.com/tendermint/tendermint/config"
-	sm "github.com/tendermint/tendermint/state"
+	tsm "github.com/tendermint/tendermint/state"
 	"github.com/tendermint/tendermint/types"
 	dbm "github.com/tendermint/tm-cmn/db"
 )
@@ -22,7 +23,7 @@ func TestStoreLoadValidators(t *testing.T) {
 	// 1) LoadValidators loads validators using a height where they were last changed
 	sm.SaveValidatorsInfo(stateDB, 1, 1, vals)
 	sm.SaveValidatorsInfo(stateDB, 2, 1, vals)
-	loadedVals, err := sm.LoadValidators(stateDB, 2)
+	loadedVals, err := tsm.LoadValidators(stateDB, 2)
 	require.NoError(t, err)
 	assert.NotZero(t, loadedVals.Size())
 
@@ -31,13 +32,13 @@ func TestStoreLoadValidators(t *testing.T) {
 	// TODO(melekes): REMOVE in 0.33 release
 	// https://github.com/tendermint/tendermint/issues/3543
 	// for releases prior to v0.31.4, it uses last height changed
-	valInfo := &sm.ValidatorsInfo{
+	valInfo := &tsm.ValidatorsInfo{
 		LastHeightChanged: sm.ValSetCheckpointInterval,
 	}
 	stateDB.Set(sm.CalcValidatorsKey(sm.ValSetCheckpointInterval), valInfo.Bytes())
 	assert.NotPanics(t, func() {
 		sm.SaveValidatorsInfo(stateDB, sm.ValSetCheckpointInterval+1, 1, vals)
-		loadedVals, err := sm.LoadValidators(stateDB, sm.ValSetCheckpointInterval+1)
+		loadedVals, err := tsm.LoadValidators(stateDB, sm.ValSetCheckpointInterval+1)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -49,7 +50,7 @@ func TestStoreLoadValidators(t *testing.T) {
 
 	sm.SaveValidatorsInfo(stateDB, sm.ValSetCheckpointInterval, 1, vals)
 
-	loadedVals, err = sm.LoadValidators(stateDB, sm.ValSetCheckpointInterval)
+	loadedVals, err = tsm.LoadValidators(stateDB, sm.ValSetCheckpointInterval)
 	require.NoError(t, err)
 	assert.NotZero(t, loadedVals.Size())
 }
@@ -61,20 +62,20 @@ func BenchmarkLoadValidators(b *testing.B) {
 	defer os.RemoveAll(config.RootDir)
 	dbType := dbm.DBBackendType(config.DBBackend)
 	stateDB := dbm.NewDB("state", dbType, config.DBDir())
-	state, err := sm.LoadStateFromDBOrGenesisFile(stateDB, config.GenesisFile())
+	state, err := tsm.LoadStateFromDBOrGenesisFile(stateDB, config.GenesisFile())
 	if err != nil {
 		b.Fatal(err)
 	}
 	state.Validators = genValSet(valSetSize)
 	state.NextValidators = state.Validators.CopyIncrementProposerPriority(1)
-	sm.SaveState(stateDB, state)
+	tsm.SaveState(stateDB, state)
 
 	for i := 10; i < 10000000000; i *= 10 { // 10, 100, 1000, ...
 		sm.SaveValidatorsInfo(stateDB, int64(i), state.LastHeightValidatorsChanged, state.NextValidators)
 
 		b.Run(fmt.Sprintf("height=%d", i), func(b *testing.B) {
 			for n := 0; n < b.N; n++ {
-				_, err := sm.LoadValidators(stateDB, int64(i))
+				_, err := tsm.LoadValidators(stateDB, int64(i))
 				if err != nil {
 					b.Fatal(err)
 				}
