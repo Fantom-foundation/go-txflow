@@ -308,6 +308,9 @@ func TestMempoolMaxMsgSize(t *testing.T) {
 	txvotepool, _, cleanup := newMempoolWithApp(cc)
 	defer cleanup()
 
+	maxMsgSize := txvotepool.config.MaxMsgBytes
+	maxTxSize := calcMaxTxSize(txvotepool.config.MaxMsgBytes)
+
 	testCases := []struct {
 		len int
 		err bool
@@ -345,7 +348,7 @@ func TestMempoolMaxMsgSize(t *testing.T) {
 			require.NoError(t, err, caseString)
 		} else {
 			require.True(t, len(encoded) > maxMsgSize, caseString)
-			require.Equal(t, err, mempool.ErrTxTooLarge, caseString)
+			require.Equal(t, err, ErrTxTooLarge{maxTxSize, testCase.len}, caseString)
 		}
 	}
 

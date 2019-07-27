@@ -2,6 +2,7 @@ package mempool
 
 import (
 	"fmt"
+	"math"
 	"reflect"
 	"sync"
 	"time"
@@ -14,6 +15,20 @@ import (
 	"github.com/tendermint/tendermint/mempool"
 	"github.com/tendermint/tendermint/p2p"
 	"github.com/tendermint/tendermint/types"
+)
+
+const (
+	MempoolChannel = byte(0x30)
+
+	aminoOverheadForTxMessage = 8
+
+	peerCatchupSleepIntervalMS = 100 // If peer is behind, sleep this amount
+
+	// UnknownPeerID is the peer ID to use when running CheckTx when there is
+	// no peer (e.g. RPC)
+	UnknownPeerID uint16 = 0
+
+	maxActiveIDs = math.MaxUint16
 )
 
 // Reactor handles mempool tx broadcasting amongst peers.
@@ -141,7 +156,7 @@ func (memR *Reactor) RemovePeer(peer p2p.Peer, reason interface{}) {
 // Receive implements Reactor.
 // It adds any received transactions to the mempool.
 func (memR *Reactor) Receive(chID byte, src p2p.Peer, msgBytes []byte) {
-	msg, err := decodeMsg(msgBytes)
+	msg, err := memR.decodeMsg(msgBytes)
 	if err != nil {
 		memR.Logger.Error("Error decoding message", "src", src, "chId", chID, "msg", msg, "err", err, "bytes", msgBytes)
 		memR.Switch.StopPeerForError(src, err)
@@ -248,9 +263,9 @@ func RegisterMempoolMessages(cdc *amino.Codec) {
 	cdc.RegisterConcrete(&TxMessage{}, "tendermint/mempool/TxMessage", nil)
 }
 
-func decodeMsg(bz []byte) (msg MempoolMessage, err error) {
-	if len(bz) > maxMsgSize {
-		return msg, fmt.Errorf("Msg exceeds max size (%d > %d)", len(bz), maxMsgSize)
+func (memR *Reactor) decodeMsg(bz []byte) (msg MempoolMessage, err error) {
+	if l := len(bz); l > memR.config.MaxMsgBytes {
+		return msg, ErrTxTooLarge{memR.config.MaxMsgBytes, l}
 	}
 	err = cdc.UnmarshalBinaryBare(bz, &msg)
 	return
@@ -266,4 +281,10 @@ type TxMessage struct {
 // String returns a string representation of the TxMessage.
 func (m *TxMessage) String() string {
 	return fmt.Sprintf("[TxMessage %v]", m.Tx)
+}
+
+// calcMaxTxSize returns the max size of Tx
+// account for amino overhead of TxMessage
+func calcMaxTxSize(maxMsgSize int) int {
+	return maxMsgSize - aminoOverheadForTxMessage
 }

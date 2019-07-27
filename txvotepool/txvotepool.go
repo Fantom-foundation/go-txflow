@@ -3,7 +3,6 @@ package txvotepool
 import (
 	"container/list"
 	"crypto/sha256"
-	"fmt"
 	"sync"
 	"sync/atomic"
 
@@ -193,10 +192,11 @@ func (txVotePool *TxVotePool) CheckTxWithInfo(tx types.TxVote, txInfo mempool.Tx
 	var (
 		memSize  = txVotePool.Size()
 		txsBytes = txVotePool.TxsBytes()
+		txSize   = tx.Size()
 	)
 
 	if memSize >= txVotePool.config.Size ||
-		int64(tx.Size())+txsBytes > txVotePool.config.MaxTxsBytes {
+		int64(txSize)+txsBytes > txVotePool.config.MaxTxsBytes {
 		return ErrMempoolIsFull{
 			memSize, txVotePool.config.Size,
 			txsBytes, txVotePool.config.MaxTxsBytes}
@@ -205,8 +205,8 @@ func (txVotePool *TxVotePool) CheckTxWithInfo(tx types.TxVote, txInfo mempool.Tx
 	// The size of the corresponding amino-encoded TxMessage
 	// can't be larger than the maxMsgSize, otherwise we can't
 	// relay it to peers.
-	if tx.Size() > maxTxSize {
-		return mempool.ErrTxTooLarge
+	if max := calcMaxTxSize(txVotePool.config.MaxMsgBytes); txSize > max {
+		return ErrTxTooLarge{max, txSize}
 	}
 
 	// CACHE
@@ -466,20 +466,4 @@ func TxVoteID(tx types.TxVote) string {
 // txVoteKey is the fixed length array sha256 hash used as the key in maps.
 func txVoteKey(tx types.TxVote) [sha256.Size]byte {
 	return sha256.Sum256(tx.Signature)
-}
-
-// ErrMempoolIsFull means Tendermint & an application can't handle that much load
-type ErrMempoolIsFull struct {
-	numTxs int
-	maxTxs int
-
-	txsBytes    int64
-	maxTxsBytes int64
-}
-
-func (e ErrMempoolIsFull) Error() string {
-	return fmt.Sprintf(
-		"mempool is full: number of txs %d (max: %d), total txs bytes %d (max: %d)",
-		e.numTxs, e.maxTxs,
-		e.txsBytes, e.maxTxsBytes)
 }

@@ -10,7 +10,7 @@ import (
 	"github.com/tendermint/tendermint/libs/log"
 	mempl "github.com/tendermint/tendermint/mempool"
 	"github.com/tendermint/tendermint/proxy"
-	sm "github.com/tendermint/tendermint/state"
+	tsm "github.com/tendermint/tendermint/state"
 	ttypes "github.com/tendermint/tendermint/types"
 	dbm "github.com/tendermint/tm-cmn/db"
 )
@@ -124,7 +124,7 @@ func (blockExec *BlockExecutor) ValidateBlock(state State, block *types.Block) e
 func (blockExec *BlockExecutor) ApplyBlock(state State, blockID ttypes.BlockID, block *types.Block) (State, error) {
 
 	if err := blockExec.ValidateBlock(state, block); err != nil {
-		return state, sm.ErrInvalidBlock(err)
+		return state, tsm.ErrInvalidBlock(err)
 	}
 
 	startTime := time.Now().UnixNano()
@@ -132,7 +132,7 @@ func (blockExec *BlockExecutor) ApplyBlock(state State, blockID ttypes.BlockID, 
 	endTime := time.Now().UnixNano()
 	blockExec.metrics.BlockProcessingTime.Observe(float64(endTime-startTime) / 1000000)
 	if err != nil {
-		return state, sm.ErrProxyAppConn(err)
+		return state, tsm.ErrProxyAppConn(err)
 	}
 
 	fail.Fail() // XXX
@@ -248,7 +248,7 @@ func execBlockOnProxyApp(
 	proxyAppConn proxy.AppConnConsensus,
 	block *types.Block,
 	stateDB dbm.DB,
-) (*sm.ABCIResponses, error) {
+) (*tsm.ABCIResponses, error) {
 	var validTxs, invalidTxs = 0, 0
 
 	txIndex := 0
@@ -315,7 +315,7 @@ func getBeginBlockValidatorInfo(block *types.Block, stateDB dbm.DB) (abci.LastCo
 	var lastValSet *ttypes.ValidatorSet
 	var err error
 	if block.Height > 1 {
-		lastValSet, err = sm.LoadValidators(stateDB, block.Height-1)
+		lastValSet, err = tsm.LoadValidators(stateDB, block.Height-1)
 		if err != nil {
 			panic(err) // shouldn't happen
 		}
@@ -350,7 +350,7 @@ func getBeginBlockValidatorInfo(block *types.Block, stateDB dbm.DB) (abci.LastCo
 		// We need the validator set. We already did this in validateBlock.
 		// TODO: Should we instead cache the valset in the evidence itself and add
 		// `SetValidatorSet()` and `ToABCI` methods ?
-		valset, err := sm.LoadValidators(stateDB, ev.Height())
+		valset, err := tsm.LoadValidators(stateDB, ev.Height())
 		if err != nil {
 			panic(err) // shouldn't happen
 		}
@@ -391,7 +391,7 @@ func updateState(
 	state State,
 	blockID ttypes.BlockID,
 	header *ttypes.Header,
-	abciResponses *sm.ABCIResponses,
+	abciResponses *tsm.ABCIResponses,
 	validatorUpdates []*ttypes.Validator,
 ) (State, error) {
 
@@ -453,7 +453,7 @@ func updateState(
 // Fire NewBlock, NewBlockHeader.
 // Fire TxEvent for every tx.
 // NOTE: if Tendermint crashes before commit, some or all of these events may be published again.
-func fireEvents(logger log.Logger, eventBus ttypes.BlockEventPublisher, block *types.Block, abciResponses *sm.ABCIResponses, validatorUpdates []*ttypes.Validator) {
+func fireEvents(logger log.Logger, eventBus ttypes.BlockEventPublisher, block *types.Block, abciResponses *tsm.ABCIResponses, validatorUpdates []*ttypes.Validator) {
 	eventBus.PublishEventNewBlock(ttypes.EventDataNewBlock{
 		Block:            block.GetTendermintBlock(),
 		ResultBeginBlock: *abciResponses.BeginBlock,

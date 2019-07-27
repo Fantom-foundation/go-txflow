@@ -20,6 +20,7 @@ import (
 	mempl "github.com/Fantom-foundation/go-txflow/mempool"
 	"github.com/Fantom-foundation/go-txflow/privval"
 	sm "github.com/Fantom-foundation/go-txflow/state"
+	"github.com/Fantom-foundation/go-txflow/store"
 	"github.com/Fantom-foundation/go-txflow/tx"
 	"github.com/Fantom-foundation/go-txflow/txflow"
 	"github.com/Fantom-foundation/go-txflow/txflowstate"
@@ -27,8 +28,7 @@ import (
 	"github.com/Fantom-foundation/go-txflow/types"
 	amino "github.com/tendermint/go-amino"
 	abci "github.com/tendermint/tendermint/abci/types"
-	"github.com/tendermint/tendermint/blockchain"
-	bc "github.com/tendermint/tendermint/blockchain"
+	bcv1 "github.com/tendermint/tendermint/blockchain/v1"
 	cfg "github.com/tendermint/tendermint/config"
 	"github.com/tendermint/tendermint/crypto/ed25519"
 	"github.com/tendermint/tendermint/evidence"
@@ -97,9 +97,26 @@ func DefaultNewNode(config *cfg.Config, logger log.Logger) (*Node, error) {
 		proxy.DefaultClientCreator(config.ProxyApp, config.ABCI, config.DBDir()),
 		node.DefaultGenesisDocProviderFunc(config),
 		node.DefaultDBProvider,
-		node.DefaultMetricsProvider(config.Instrumentation),
+		DefaultMetricsProvider(config.Instrumentation),
 		logger,
 	)
+}
+
+// MetricsProvider returns a consensus, p2p and mempool Metrics.
+type MetricsProvider func(chainID string) (*cs.Metrics, *p2p.Metrics, *tmempl.Metrics, *sm.Metrics)
+
+// DefaultMetricsProvider returns Metrics build using Prometheus client library
+// if Prometheus is enabled. Otherwise, it returns no-op Metrics.
+func DefaultMetricsProvider(config *cfg.InstrumentationConfig) MetricsProvider {
+	return func(chainID string) (*cs.Metrics, *p2p.Metrics, *tmempl.Metrics, *sm.Metrics) {
+		if config.Prometheus {
+			return cs.PrometheusMetrics(config.Namespace, "chain_id", chainID),
+				p2p.PrometheusMetrics(config.Namespace, "chain_id", chainID),
+				tmempl.PrometheusMetrics(config.Namespace, "chain_id", chainID),
+				sm.PrometheusMetrics(config.Namespace, "chain_id", chainID)
+		}
+		return cs.NopMetrics(), p2p.NopMetrics(), tmempl.NopMetrics(), sm.NopMetrics()
+	}
 }
 
 //------------------------------------------------------------------------------
@@ -123,13 +140,14 @@ type Node struct {
 	isListening bool
 
 	// services
-	eventBus       *ttypes.EventBus // pub/sub for services
-	stateDB        dbm.DB
-	blockStore     *bc.BlockStore        // store the blockchain to disk
-	bcReactor      *bc.BlockchainReactor // for fast-syncing
-	mempoolReactor *mempl.Reactor        // for gossipping transactions
-	mempool        tmempl.Mempool
-	commitpool     tmempl.Mempool
+	eventBus          *ttypes.EventBus // pub/sub for services
+	stateDB           dbm.DB
+	blockStore        *store.BlockStore // store the blockchain to disk
+	bcReactor         p2p.Reactor       // for fast-syncing
+	mempoolReactor    *mempl.Reactor    // for gossipping transactions
+	mempool           tmempl.Mempool
+	commitpool        tmempl.Mempool
+	commitpoolReactor *mempl.Reactor
 
 	//TxVotePool system for aBFT voting on mempool Tx's
 	txvotepoolReactor *txvotepool.Reactor
@@ -149,13 +167,13 @@ type Node struct {
 	prometheusSrv    *http.Server
 }
 
-func initDBs(config *cfg.Config, dbProvider node.DBProvider) (blockStore *bc.BlockStore, txStore *tx.TxStore, stateDB dbm.DB, err error) {
+func initDBs(config *cfg.Config, dbProvider node.DBProvider) (blockStore *store.BlockStore, txStore *tx.TxStore, stateDB dbm.DB, err error) {
 	var blockStoreDB dbm.DB
 	blockStoreDB, err = dbProvider(&node.DBContext{"blockstore", config})
 	if err != nil {
 		return
 	}
-	blockStore = bc.NewBlockStore(blockStoreDB)
+	blockStore = store.NewBlockStore(blockStoreDB)
 
 	var txStoreDB dbm.DB
 	txStoreDB, err = dbProvider(&node.DBContext{"txstore", config})
@@ -288,6 +306,27 @@ func createMempoolAndMempoolReactor(config *cfg.Config, proxyApp proxy.AppConns,
 	return mempoolReactor, mempool
 }
 
+func createCommitpoolAndCommitpoolReactor(config *cfg.Config, proxyApp proxy.AppConns,
+	state sm.State, memplMetrics *tmempl.Metrics, logger log.Logger) (*mempl.Reactor, *mempl.CListMempool) {
+
+	commitpool := mempl.NewCListMempool(
+		config.Mempool,
+		proxyApp.Mempool(),
+		state.LastBlockHeight,
+		mempl.WithMetrics(memplMetrics),
+		mempl.WithPreCheck(sm.TxPreCheck(state)),
+		mempl.WithPostCheck(sm.TxPostCheck(state)),
+	)
+	commitpoolLogger := logger.With("module", "commitpool")
+	commitpoolReactor := mempl.NewReactor(config.Mempool, commitpool)
+	commitpoolReactor.SetLogger(commitpoolLogger)
+
+	if config.Consensus.WaitForTxs() {
+		commitpool.EnableTxsAvailable()
+	}
+	return commitpoolReactor, commitpool
+}
+
 func createTxVotePoolAndTxVotePoolReactor(config *cfg.Config,
 	state *sm.State, privVal types.PrivValidator, mempool *mempl.CListMempool, memplMetrics *tmempl.Metrics, logger log.Logger) (*txvotepool.Reactor, *txvotepool.TxVotePool) {
 
@@ -325,6 +364,24 @@ func createEvidenceReactor(config *cfg.Config, dbProvider node.DBProvider,
 	evidenceReactor := evidence.NewEvidenceReactor(evidencePool)
 	evidenceReactor.SetLogger(evidenceLogger)
 	return evidenceReactor, evidencePool, nil
+}
+
+func createBlockchainReactor(config *cfg.Config,
+	state sm.State,
+	blockExec *sm.BlockExecutor,
+	blockStore *store.BlockStore,
+	fastSync bool,
+	logger log.Logger) (bcReactor p2p.Reactor, err error) {
+
+	switch config.FastSync.Version {
+	case "v1":
+		bcReactor = bcv1.NewBlockchainReactor(state.Copy(), blockExec, blockStore, fastSync)
+	default:
+		return nil, fmt.Errorf("unknown fastsync version %s", config.FastSync.Version)
+	}
+
+	bcReactor.SetLogger(logger.With("module", "blockchain"))
+	return bcReactor, nil
 }
 
 func createConsensusReactor(config *cfg.Config,
@@ -421,7 +478,7 @@ func createSwitch(config *cfg.Config,
 	p2pMetrics *p2p.Metrics,
 	peerFilters []p2p.PeerFilterFunc,
 	mempoolReactor *mempl.Reactor,
-	bcReactor *blockchain.BlockchainReactor,
+	bcReactor *bcv1.BlockchainReactor,
 	consensusReactor *cs.ConsensusReactor,
 	evidenceReactor *evidence.EvidenceReactor,
 	nodeInfo p2p.NodeInfo,
@@ -501,7 +558,7 @@ func NewNode(config *cfg.Config,
 	clientCreator proxy.ClientCreator,
 	genesisDocProvider node.GenesisDocProvider,
 	dbProvider node.DBProvider,
-	metricsProvider node.MetricsProvider,
+	metricsProvider MetricsProvider,
 	logger log.Logger,
 	options ...Option) (*Node, error) {
 
@@ -562,12 +619,15 @@ func NewNode(config *cfg.Config,
 
 	// Decide whether to fast-sync or not
 	// We don't fast-sync when the only validator is us.
-	fastSync := config.FastSync && !onlyValidatorIsUs(state, privValidator)
+	fastSync := config.FastSyncMode && !onlyValidatorIsUs(state, privValidator)
 
 	csMetrics, p2pMetrics, memplMetrics, smMetrics := metricsProvider(genDoc.ChainID)
 
 	// Make MempoolReactor
 	mempoolReactor, mempool := createMempoolAndMempoolReactor(config, proxyApp, state, memplMetrics, logger)
+
+	// Make Commitpool
+	commitpoolReactor, commitpool := createCommitpoolAndCommitpoolReactor(config, proxyApp, state, memplMetrics, logger)
 
 	// Make TxVotePoolReactor
 	txvotepoolReactor, txvotepool := createTxVotePoolAndTxVotePoolReactor(config, &state, privValidator, mempool, memplMetrics, logger)
@@ -584,6 +644,7 @@ func NewNode(config *cfg.Config,
 		logger.With("module", "state"),
 		proxyApp.Consensus(),
 		mempool,
+		commitpool,
 		evidencePool,
 		sm.BlockExecutorWithMetrics(smMetrics),
 	)
@@ -607,8 +668,10 @@ func NewNode(config *cfg.Config,
 	txf.SetLogger(txfLogger)
 
 	// Make BlockchainReactor
-	bcReactor := bc.NewBlockchainReactor(state.Copy(), blockExec, blockStore, fastSync)
-	bcReactor.SetLogger(logger.With("module", "blockchain"))
+	bcReactor, err := createBlockchainReactor(config, state, blockExec, blockStore, fastSync, logger)
+	if err != nil {
+		return nil, errors.Wrap(err, "could not create blockchain reactor")
+	}
 
 	// Make ConsensusReactor
 	consensusReactor, consensusState := createConsensusReactor(
@@ -949,7 +1012,7 @@ func (n *Node) Switch() *p2p.Switch {
 }
 
 // BlockStore returns the Node's BlockStore.
-func (n *Node) BlockStore() *bc.BlockStore {
+func (n *Node) BlockStore() *store.BlockStore {
 	return n.blockStore
 }
 
@@ -1057,7 +1120,7 @@ func makeNodeInfo(
 		Network: genDoc.ChainID,
 		Version: version.TMCoreSemVer,
 		Channels: []byte{
-			bc.BlockchainChannel,
+			bcv1.BlockchainChannel,
 			cs.StateChannel, cs.DataChannel, cs.VoteChannel, cs.VoteSetBitsChannel,
 			mempl.MempoolChannel,
 			evidence.EvidenceChannel,

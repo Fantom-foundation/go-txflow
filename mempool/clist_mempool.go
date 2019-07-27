@@ -5,7 +5,6 @@ import (
 	"container/list"
 	"crypto/sha256"
 	"fmt"
-	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -21,21 +20,6 @@ import (
 	"github.com/tendermint/tendermint/mempool"
 	"github.com/tendermint/tendermint/proxy"
 	"github.com/tendermint/tendermint/types"
-)
-
-const (
-	MempoolChannel = byte(0x30)
-
-	maxMsgSize = 1048576        // 1MB TODO make it configurable
-	maxTxSize  = maxMsgSize - 8 // account for amino overhead of TxMessage
-
-	peerCatchupSleepIntervalMS = 100 // If peer is behind, sleep this amount
-
-	// UnknownPeerID is the peer ID to use when running CheckTx when there is
-	// no peer (e.g. RPC)
-	UnknownPeerID uint16 = 0
-
-	maxActiveIDs = math.MaxUint16
 )
 
 //--------------------------------------------------------------------------------
@@ -245,9 +229,10 @@ func (mem *CListMempool) CheckTxWithInfo(tx types.Tx, cb func(*abci.Response), t
 	var (
 		memSize  = mem.Size()
 		txsBytes = mem.TxsBytes()
+		txSize   = len(tx)
 	)
 	if memSize >= mem.config.Size ||
-		int64(len(tx))+txsBytes > mem.config.MaxTxsBytes {
+		int64(txSize)+txsBytes > mem.config.MaxTxsBytes {
 		return ErrMempoolIsFull{
 			memSize, mem.config.Size,
 			txsBytes, mem.config.MaxTxsBytes}
@@ -256,8 +241,8 @@ func (mem *CListMempool) CheckTxWithInfo(tx types.Tx, cb func(*abci.Response), t
 	// The size of the corresponding amino-encoded TxMessage
 	// can't be larger than the maxMsgSize, otherwise we can't
 	// relay it to peers.
-	if len(tx) > maxTxSize {
-		return ErrTxTooLarge
+	if max := calcMaxTxSize(mem.config.MaxMsgBytes); txSize > max {
+		return ErrTxTooLarge{max, txSize}
 	}
 
 	if mem.preCheck != nil {

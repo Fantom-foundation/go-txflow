@@ -11,21 +11,20 @@ import (
 	amino "github.com/tendermint/go-amino"
 
 	"github.com/Fantom-foundation/go-txflow/mempool"
+	"github.com/Fantom-foundation/go-txflow/state"
 	"github.com/Fantom-foundation/go-txflow/types"
 	cfg "github.com/tendermint/tendermint/config"
 	"github.com/tendermint/tendermint/libs/clist"
 	"github.com/tendermint/tendermint/libs/log"
 	tmempool "github.com/tendermint/tendermint/mempool"
 	"github.com/tendermint/tendermint/p2p"
-	"github.com/tendermint/tendermint/state"
 	ttypes "github.com/tendermint/tendermint/types"
 )
 
 const (
 	TxVotePoolChannel = byte(0x32)
 
-	maxMsgSize = 1048576        // 1MB TODO make it configurable
-	maxTxSize  = maxMsgSize - 8 // account for amino overhead of TxMessage
+	aminoOverheadForTxMessage = 8
 
 	peerCatchupSleepIntervalMS = 100 // If peer is behind, sleep this amount
 
@@ -169,7 +168,7 @@ func (txR *Reactor) Size() int {
 // Receive implements Reactor.
 // It adds any received transactions to the txpool.
 func (txR *Reactor) Receive(chID byte, src p2p.Peer, msgBytes []byte) {
-	msg, err := decodeMsg(msgBytes)
+	msg, err := txR.decodeMsg(msgBytes)
 	if err != nil {
 		txR.Logger.Error("Error decoding message", "src", src, "chId", chID, "msg", msg, "err", err, "bytes", msgBytes)
 		txR.Switch.StopPeerForError(src, err)
@@ -276,9 +275,9 @@ func RegisterTxVotePoolMessages(cdc *amino.Codec) {
 	cdc.RegisterConcrete(&TxVoteMessage{}, "tendermint/txvotepool/TxVoteMessage", nil)
 }
 
-func decodeMsg(bz []byte) (msg TxpoolMessage, err error) {
-	if len(bz) > maxMsgSize {
-		return msg, fmt.Errorf("Msg exceeds max size (%d > %d)", len(bz), maxMsgSize)
+func (memR *Reactor) decodeMsg(bz []byte) (msg TxpoolMessage, err error) {
+	if l := len(bz); l > memR.config.MaxMsgBytes {
+		return msg, ErrTxTooLarge{memR.config.MaxMsgBytes, l}
 	}
 	err = cdc.UnmarshalBinaryBare(bz, &msg)
 	return
@@ -373,4 +372,10 @@ type mempoolTx struct {
 // Height returns the height for this transaction
 func (memTx *mempoolTx) Height() int64 {
 	return atomic.LoadInt64(&memTx.height)
+}
+
+// calcMaxTxSize returns the max size of Tx
+// account for amino overhead of TxMessage
+func calcMaxTxSize(maxMsgSize int) int {
+	return maxMsgSize - aminoOverheadForTxMessage
 }
